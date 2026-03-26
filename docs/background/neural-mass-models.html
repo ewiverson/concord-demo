@@ -1,0 +1,1035 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Neural Mass Models — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  .viz-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin: 1rem 0 1.5rem;
+  }
+  .viz-container .js-plotly-plot { margin-bottom: 0.75rem; }
+  .slider-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0.4rem 0;
+    font-size: 0.85rem;
+  }
+  .slider-row label {
+    min-width: 80px;
+    font-family: "JetBrains Mono", monospace;
+    color: var(--teal);
+    font-size: 0.82rem;
+  }
+  .slider-row input[type="range"] {
+    flex: 1;
+    accent-color: var(--accent);
+    height: 4px;
+  }
+  .slider-row .slider-val {
+    min-width: 55px;
+    text-align: right;
+    font-family: "JetBrains Mono", monospace;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+  }
+  .viz-caption {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    margin-top: 0.4rem;
+    font-style: italic;
+  }
+  .regime-label {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    margin-left: 0.5rem;
+  }
+  .regime-noise  { background: rgba(91,141,238,0.15); color: var(--accent); }
+  .regime-alpha  { background: rgba(77,222,128,0.15); color: var(--green); }
+  .regime-spikes { background: rgba(248,113,113,0.15); color: var(--red); }
+</style>
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Background<span class="sep">›</span> Neural Mass Models</div>
+<h1>Neural Mass Models</h1>
+<p class="subtitle">Background reading: what neural mass models are and how the Jansen-Rit model works</p>
+
+<h2>The Problem: Simulating Brain Activity</h2>
+
+<p>
+  A human brain has roughly 86 billion neurons. Each neuron connects to thousands of others
+  through synapses, producing electrical signals that we can measure with electrodes.
+  When we record SEEG (stereotactic EEG), we are measuring the combined electrical activity
+  of millions of neurons near each electrode contact.
+</p>
+
+<p>
+  We would like to <em>simulate</em> this activity — to build a mathematical model that produces
+  signals that look like real brain recordings. Why? Because if we can reproduce what we observe,
+  we can understand the mechanisms behind it. For epilepsy, this means understanding what
+  makes certain brain regions generate seizures.
+</p>
+
+<p>
+  But simulating 86 billion individual neurons is computationally impossible for most purposes.
+  We need a shortcut.
+</p>
+
+<h2>The Shortcut: Populations Instead of Individual Neurons</h2>
+
+<p>
+  A <strong>neural mass model</strong> takes a radical simplification: instead of modeling each neuron
+  individually, it models the <em>average behavior</em> of a large population of similar neurons.
+  Think of it like weather forecasting — you do not track every air molecule; you track
+  temperature and pressure as average properties of large volumes of air.
+</p>
+
+<p>
+  In the brain, neurons of the same type that are physically close together tend to behave similarly.
+  So we group them into <strong>populations</strong> and describe each population with just a few numbers:
+</p>
+
+<ul>
+  <li><strong>Mean membrane potential</strong> — the average electrical state of all neurons in the group</li>
+  <li><strong>Mean firing rate</strong> — how many action potentials (spikes) the group produces per second, on average</li>
+</ul>
+
+<p>
+  This reduces millions of neurons to a handful of variables. A single brain region might be
+  described by 3 populations and 6 variables — instead of millions of individual neuron states.
+</p>
+
+<div class="callout callout-key">
+  <strong>The key trade-off</strong>
+  Neural mass models sacrifice individual neuron detail to gain the ability to simulate
+  large-scale brain dynamics quickly. They are accurate enough to reproduce the rhythms
+  and patterns we see in EEG/SEEG, while being fast enough to run on a laptop.
+</div>
+
+<h2>Two Key Ingredients</h2>
+
+<p>
+  Every neural mass model is built from two fundamental operations:
+</p>
+
+<h3>1. The Post-Synaptic Potential (PSP) Operator</h3>
+
+<p>
+  When a neuron fires, it sends a signal to connected neurons. The receiving neuron does not
+  respond instantly — the incoming spike is transformed into a smooth, gradual voltage change
+  called a <strong>post-synaptic potential</strong>. This is modeled as a simple second-order
+  linear system (like a spring that gets pushed and then wobbles back to rest):
+</p>
+
+<pre><code><span class="cm">Second-order linear system (one per population):</span>
+
+  <span class="nm">d²y/dt²</span> = <span class="nm">A · a · input</span> - <span class="nm">2a · dy/dt</span> - <span class="nm">a² · y</span>
+
+  <span class="nm">A</span> = maximum amplitude of the response (how big the voltage bump is)
+  <span class="nm">a</span> = time constant (how fast it rises and decays)
+  <span class="nm">y</span> = the resulting post-synaptic potential</code></pre>
+
+<p>
+  An incoming spike goes in; a smooth voltage curve comes out.
+  <strong>Excitatory</strong> PSPs push the voltage up (making neurons more likely to fire),
+  while <strong>inhibitory</strong> PSPs push it down (making them less likely to fire).
+</p>
+
+<h3>2. The Sigmoid Function</h3>
+
+<p>
+  The other direction: given a population's average membrane potential, how fast does it fire?
+  The relationship is not linear — at very low voltages, neurons barely fire at all.
+  At very high voltages, they fire at their maximum rate. In between, there is a smooth
+  S-shaped transition. This is the <strong>sigmoid function</strong>:
+</p>
+
+<pre><code><span class="nm">S(v)</span> = <span class="nm">2 · e0</span> / (<span class="nb">1</span> + exp(<span class="nm">r</span> · (<span class="nm">v0</span> - <span class="nm">v</span>)))
+
+  <span class="nm">e0</span> = half the maximum firing rate
+  <span class="nm">v0</span> = voltage at which firing is half-maximal
+  <span class="nm">r</span>  = steepness of the transition</code></pre>
+
+<p>
+  Low voltage in → near-zero firing rate out. High voltage in → maximum firing rate out.
+  The sigmoid converts between the two "languages" of the model: <em>voltage</em> and <em>firing rate</em>.
+</p>
+
+<!-- ═══════════ INTERACTIVE SIGMOID ═══════════ -->
+<div class="viz-container">
+  <div id="sigmoid-plot" style="width:100%;height:280px;"></div>
+  <div class="slider-row">
+    <label>e0</label>
+    <input type="range" id="sl-e0" min="0.5" max="5" step="0.1" value="2.5">
+    <span class="slider-val" id="val-e0">2.5</span>
+  </div>
+  <div class="slider-row">
+    <label>v0</label>
+    <input type="range" id="sl-v0" min="2" max="12" step="0.1" value="6">
+    <span class="slider-val" id="val-v0">6.0</span>
+  </div>
+  <div class="slider-row">
+    <label>r</label>
+    <input type="range" id="sl-r" min="0.1" max="2" step="0.01" value="0.56">
+    <span class="slider-val" id="val-r">0.56</span>
+  </div>
+  <div class="viz-caption">Drag the sliders to see how each parameter shapes the sigmoid. The dot marks the half-maximum point (v0, e0).</div>
+</div>
+
+<div class="callout callout-note">
+  <strong>The feedback loop</strong>
+  PSP operators convert firing rate → voltage. The sigmoid converts voltage → firing rate.
+  Chain them together and you get a feedback loop: firing produces voltage changes, which
+  change firing rates, which produce more voltage changes. This is what creates oscillations.
+</div>
+
+<h2>The Jansen-Rit Model</h2>
+
+<p>
+  The <strong>Jansen-Rit model</strong> (1995) is the most widely used neural mass model.
+  It describes a single cortical column — a small vertical cylinder of brain tissue about
+  2 mm wide — using three interconnected populations:
+</p>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Population</th><th>Type</th><th>Role</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Pyramidal cells</td><td>Excitatory</td><td>The main output neurons. Their activity is what we measure with electrodes.</td></tr>
+    <tr><td>Excitatory interneurons</td><td>Excitatory</td><td>Receive input from pyramidal cells and feed excitation back to them.</td></tr>
+    <tr><td>Inhibitory interneurons</td><td>Inhibitory</td><td>Receive input from pyramidal cells and send inhibition back to them.</td></tr>
+  </tbody>
+</table>
+
+<h3>How They Connect</h3>
+
+<p>
+  The three populations form a loop:
+</p>
+
+<pre class="mermaid">
+graph TD
+  INPUT(["External input p(t)"])
+  EXC["Excitatory Interneurons\n(amplify signal)"]
+  PYR["**Pyramidal Cells**\n(main output: y1 − y2)"]
+  INH["Inhibitory Interneurons\n(dampen signal)"]
+
+  INPUT -->|"p(t)"| EXC
+  PYR -->|"C1"| EXC
+  EXC -->|"C2 · excitatory"| PYR
+  PYR -->|"C3"| INH
+  INH -->|"C4 · inhibitory"| PYR
+
+  style EXC fill:#0a3d1a,stroke:#4ade80,color:#4ade80
+  style PYR fill:#162450,stroke:#5b8dee,color:#5b8dee
+  style INH fill:#3d0a0a,stroke:#f87171,color:#f87171
+  style INPUT fill:#2a1850,stroke:#a78bfa,color:#a78bfa
+</pre>
+
+<p>
+  The <strong>C</strong> values (C1, C2, C3, C4) control how strongly the populations
+  talk to each other. They are all derived from a single connectivity constant C:
+</p>
+
+<pre><code><span class="nm">C1</span> = C          <span class="cm"># pyramidal → excitatory interneurons</span>
+<span class="nm">C2</span> = 0.8 · C    <span class="cm"># excitatory interneurons → pyramidal</span>
+<span class="nm">C3</span> = 0.25 · C   <span class="cm"># pyramidal → inhibitory interneurons</span>
+<span class="nm">C4</span> = 0.25 · C   <span class="cm"># inhibitory interneurons → pyramidal</span></code></pre>
+
+<h3>The External Input</h3>
+
+<p>
+  The excitatory interneurons receive an <strong>external input</strong> p(t)
+  representing activity arriving from other brain regions and sensory pathways.
+  This input is modeled as random noise with a mean value and some variability:
+</p>
+
+<pre><code><span class="nm">p(t)</span> = mean_input + noise
+
+<span class="cm"># Typically: mean = 220 Hz, noise std = 22 Hz</span>
+<span class="cm"># This represents the average background bombardment</span>
+<span class="cm"># from the rest of the brain.</span></code></pre>
+
+<p>
+  The noise is what keeps the model "alive" — without it, the system would settle
+  to a fixed point and stop oscillating.
+</p>
+
+<h3>The Output</h3>
+
+<p>
+  What we measure with an electrode is the <strong>difference between excitatory and
+  inhibitory post-synaptic potentials</strong> arriving at the pyramidal cells:
+</p>
+
+<pre><code><span class="nm">output(t)</span> = y1(t) - y2(t)
+
+<span class="cm"># y1 = excitatory PSP on pyramidal cells</span>
+<span class="cm"># y2 = inhibitory PSP on pyramidal cells</span>
+<span class="cm"># The difference is what the electrode picks up</span></code></pre>
+
+<p>
+  This is a direct analog of real EEG/SEEG: the signal we record at electrodes is generated
+  primarily by the summed post-synaptic potentials of pyramidal cells.
+</p>
+
+<h3>The Full Equations</h3>
+
+<p>
+  Each population has a PSP operator (second-order ODE), which we split into two first-order
+  ODEs. Three populations × 2 variables each = <strong>6 state variables</strong>:
+</p>
+
+<pre><code><span class="cm"># State vector: [y0, y1, y2, y3, y4, y5]</span>
+<span class="cm"># y0..y2 are PSP outputs, y3..y5 are their derivatives</span>
+
+<span class="cm"># Position derivatives (just linking to velocities)</span>
+<span class="nm">dy0/dt</span> = y3
+<span class="nm">dy1/dt</span> = y4
+<span class="nm">dy2/dt</span> = y5
+
+<span class="cm"># Velocity derivatives (the actual dynamics)</span>
+<span class="nm">dy3/dt</span> = A·a·S(y1 - y2) - 2a·y3 - a²·y0
+<span class="nm">dy4/dt</span> = A·a·(p(t) + C2·S(C1·y0)) - 2a·y4 - a²·y1
+<span class="nm">dy5/dt</span> = B·b·C4·S(C3·y0) - 2b·y5 - b²·y2
+
+<span class="cm"># Output (simulated SEEG signal)</span>
+<span class="nm">output</span> = y1 - y2</code></pre>
+
+<h3>The Parameters</h3>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Parameter</th><th>Default</th><th>Units</th><th>What it controls</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>A</td><td>3.25</td><td>mV</td><td>Maximum excitatory PSP amplitude</td></tr>
+    <tr><td>B</td><td>22.0</td><td>mV</td><td>Maximum inhibitory PSP amplitude</td></tr>
+    <tr><td>a</td><td>100</td><td>1/s</td><td>Excitatory time constant (faster rise and decay)</td></tr>
+    <tr><td>b</td><td>50</td><td>1/s</td><td>Inhibitory time constant (slower rise and decay)</td></tr>
+    <tr><td>C</td><td>135</td><td></td><td>Global connectivity strength</td></tr>
+    <tr><td>e0</td><td>2.5</td><td>1/s</td><td>Half of the maximum firing rate</td></tr>
+    <tr><td>v0</td><td>6.0</td><td>mV</td><td>PSP at half-maximal firing rate</td></tr>
+    <tr><td>r</td><td>0.56</td><td>1/mV</td><td>Sigmoid steepness</td></tr>
+    <tr><td>p</td><td>220</td><td>Hz</td><td>Mean external input (from other brain regions)</td></tr>
+    <tr><td>sigma</td><td>22</td><td>Hz</td><td>Noise standard deviation on external input</td></tr>
+  </tbody>
+</table>
+
+<h2>What It Produces</h2>
+
+<p>
+  At the default parameter values, the Jansen-Rit model produces a signal with a dominant
+  frequency around <strong>10 Hz</strong> — the <strong>alpha rhythm</strong>, the most prominent
+  rhythm in human EEG. This matches what we observe when a person is relaxed with eyes closed.
+</p>
+
+<p>
+  By changing the mean input <code>p</code>, the model transitions through different regimes:
+</p>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Input range (p)</th><th>Behavior</th><th>Analog</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>0 – 100 Hz</td><td>Low-amplitude noise</td><td>Low background activity</td></tr>
+    <tr><td>120 – 320 Hz</td><td>Alpha oscillation (~10 Hz)</td><td>Normal resting-state EEG</td></tr>
+    <tr><td>Above 320 Hz</td><td>Large-amplitude spikes</td><td>Epileptiform activity</td></tr>
+  </tbody>
+</table>
+
+<!-- ═══════════ LIVE SIMULATION ═══════════ -->
+<div class="viz-container">
+  <div id="sim-plot" style="width:100%;height:300px;"></div>
+  <div class="slider-row">
+    <label>p (input)</label>
+    <input type="range" id="sl-p" min="0" max="500" step="5" value="220">
+    <span class="slider-val" id="val-p">220 Hz</span>
+    <span class="regime-label regime-alpha" id="regime-badge">alpha</span>
+  </div>
+  <div class="slider-row">
+    <label>sigma</label>
+    <input type="range" id="sl-sigma" min="0" max="80" step="1" value="22">
+    <span class="slider-val" id="val-sigma">22 Hz</span>
+  </div>
+  <div class="slider-row">
+    <label>C</label>
+    <input type="range" id="sl-C" min="50" max="400" step="5" value="135">
+    <span class="slider-val" id="val-C">135</span>
+  </div>
+  <div class="viz-caption">Live Jansen-Rit simulation running in your browser. Drag <strong>p</strong> to move between noise, alpha rhythm, and epileptiform spiking regimes.</div>
+</div>
+
+<div class="callout callout-tip">
+  <strong>Why this matters for epilepsy</strong>
+  The Jansen-Rit model shows that a small change in a single parameter (the input drive)
+  can push a brain region from normal activity into epileptiform spiking.
+  More complex models like Wendling (which extends Jansen-Rit with a fourth population)
+  can reproduce a full range of seizure dynamics. The goal of model fitting is to find
+  which parameter values best explain a patient's recorded brain activity.
+</div>
+
+<!-- ═══════════ REGIME SWEEP ═══════════ -->
+<h2>Parameter Regime Map</h2>
+
+<p>
+  This plot sweeps the mean input <code>p</code> from 0 to 500 Hz and shows the
+  RMS amplitude of the model output at each value. The three behavioral regimes are visible
+  as distinct regions of the curve:
+</p>
+
+<div class="viz-container">
+  <div id="sweep-plot" style="width:100%;height:300px;"></div>
+  <div class="viz-caption">Each point is a 2-second simulation. The sharp transitions mark bifurcation boundaries where the model's behavior changes qualitatively.</div>
+</div>
+
+<h2>How It Is Solved Numerically</h2>
+
+<p>
+  The 6 ODEs cannot be solved with a closed-form formula — they must be
+  <strong>integrated numerically</strong>. Starting from an initial state (all zeros),
+  the solver takes tiny time steps (typically 0.1 ms) and computes the state at each step
+  using the derivatives.
+</p>
+
+<p>
+  Montage Concord uses <strong>Runge-Kutta 4</strong> (RK4) for this. RK4 evaluates the
+  derivatives at four points within each time step and takes a weighted average, giving
+  much better accuracy than simply stepping forward by the derivative (Euler's method).
+  The noise enters through the external input p(t), which is pre-generated as a random
+  time series and passed to the derivative function at each step.
+</p>
+
+<p>
+  After integration at the fine time step (0.1 ms = 10,000 Hz), the output is
+  <strong>downsampled</strong> to the requested sampling rate (e.g. 256 Hz or 1024 Hz)
+  to match typical EEG recording rates.
+</p>
+
+<h2>Where It Fits in the Concord Pipeline</h2>
+
+<p>
+  In Montage Concord, the Jansen-Rit model implements the <strong>Model ABC</strong>
+  defined in <a href="../packages/core.html">concord-core</a>. The simulation pipeline is:
+</p>
+
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-number">1</div>
+    <div class="flow-node"><strong>ParameterVector</strong><br>Named values + bounds</div>
+  </div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step">
+    <div class="flow-number">2</div>
+    <div class="flow-node"><strong>Model.simulate()</strong><br>RK4 integration</div>
+  </div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step">
+    <div class="flow-number">3</div>
+    <div class="flow-node"><strong>ModelOutput</strong><br>Simulated signal + state</div>
+  </div>
+  <div class="flow-arrow">→</div>
+  <div class="flow-step">
+    <div class="flow-number">4</div>
+    <div class="flow-node"><strong>Metrics / Viz</strong><br>Analyze like real data</div>
+  </div>
+</div>
+
+<p>
+  The <code>ModelOutput</code> contains a simulated signal in the same format as a real
+  <code>Recording</code>, so the same metrics and visualization tools work on both.
+  This is how model fitting will work: simulate, compute metrics on the simulation,
+  compare to metrics on real data, adjust parameters, repeat.
+</p>
+
+<h2>Beyond Jansen-Rit</h2>
+
+<p>
+  Jansen-Rit is the foundation. The planned model packages extend it in different directions:
+</p>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Model</th><th>Extension</th><th>What it adds</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><strong><a href="../packages/model-wendling.html">Wendling</a></strong></td><td>+1 population (fast inhibitory)</td><td>Full seizure dynamics — can reproduce background through ictal activity</td></tr>
+    <tr><td><strong>Epileptor</strong></td><td>Different math (bifurcation model)</td><td>Automatic seizure onset and termination via slow variable</td></tr>
+    <tr><td><strong>Robinson</strong></td><td>Thalamocortical loop</td><td>Sleep dynamics — spindles, K-complexes, arousal states</td></tr>
+  </tbody>
+</table>
+
+<p>
+  All share the same infrastructure: the <a href="../packages/core.html">Model ABC</a>,
+  <a href="../packages/models-utils.html">models-utils</a> (integrators, sigmoids),
+  and the <code>ParameterVector</code> → <code>ModelOutput</code> data flow.
+</p>
+
+<!-- ═══════════ MODEL–REALITY GAP ═══════════ -->
+<h2>The Gap Between Model and Reality</h2>
+
+<p>
+  The Jansen-Rit model is a powerful explanatory tool, but it is not a literal replica
+  of real EEG. Understanding where the model diverges from measured data is essential —
+  both for interpreting model output honestly and for designing fitting procedures that
+  know what they can and cannot recover.
+</p>
+
+<h3>1/f Noise: The Missing Background</h3>
+
+<p>
+  Real EEG power spectra follow a characteristic <strong>1/f</strong> shape: power decreases
+  roughly as the inverse of frequency, forming a straight line on a log-log plot. This
+  "pink noise" floor underlies all oscillatory peaks. It is thought to arise from the
+  superposition of many independent processes at different timescales — synaptic noise,
+  dendritic filtering, volume conduction through tissue.
+</p>
+
+<p>
+  The Jansen-Rit model does not produce 1/f noise. Its output has oscillatory peaks
+  (driven by the excitatory-inhibitory loop) sitting on top of the white noise injected
+  via p(t). White noise has flat power across all frequencies — the opposite of the 1/f
+  slope seen in real data.
+</p>
+
+<!-- ═══════════ 1/f COMPARISON VIZ ═══════════ -->
+<div class="viz-container">
+  <div id="onef-plot" style="width:100%;height:320px;"></div>
+  <div class="slider-row">
+    <label>1/f slope</label>
+    <input type="range" id="sl-onef-exp" min="0" max="3" step="0.1" value="1.5">
+    <span class="slider-val" id="val-onef-exp">1.5</span>
+  </div>
+  <div class="slider-row">
+    <label>mix ratio</label>
+    <input type="range" id="sl-onef-mix" min="0" max="1" step="0.05" value="0.5">
+    <span class="slider-val" id="val-onef-mix">0.50</span>
+  </div>
+  <div class="viz-caption">
+    Left: pure JR output (white noise floor). Right: JR mixed with synthetic 1/f noise.
+    The <strong>mix ratio</strong> blends JR (0.0) with 1/f (1.0). Real EEG falls somewhere in between.
+    Drag the <strong>slope</strong> to see how steeper 1/f backgrounds change the spectral shape.
+  </div>
+</div>
+
+<p>
+  This matters in practice because many EEG metrics — band power, spectral edge frequency,
+  1/f exponent itself — are shaped as much by the aperiodic background as by the oscillatory
+  peaks. A model that matches the alpha peak but ignores the 1/f floor will produce
+  misleading metric values. Common strategies for dealing with this include:
+</p>
+
+<ul>
+  <li><strong>Fitting metrics that are robust to the background</strong> — relative band power,
+    peak frequency, and spectral ratios are less sensitive to the 1/f floor than absolute
+    power.</li>
+  <li><strong>Adding 1/f noise post-hoc</strong> — after simulation, synthetic 1/f noise can be
+    mixed into the model output before metric comparison. The 1/f exponent and amplitude
+    become additional parameters to fit.</li>
+  <li><strong>Separating periodic and aperiodic components</strong> — spectral parameterization
+    (e.g., FOOOF) isolates oscillatory peaks from the 1/f background,
+    allowing fitting to target the periodic component only.</li>
+</ul>
+
+<h3>Non-Identifiability: Multiple Solutions to the Same Data</h3>
+
+<p>
+  The Jansen-Rit model has 10 free parameters. The measured data it must match is typically
+  summarized by a handful of features: dominant frequency, relative band powers, waveform
+  statistics. There are far more degrees of freedom in the model than constraints in the data.
+  This means the problem is <strong>non-identifiable</strong> — multiple different parameter
+  combinations can produce nearly identical output features.
+</p>
+
+<div class="callout callout-warn">
+  <strong>Practical example of non-identifiability</strong>
+  An alpha rhythm at 10 Hz with a certain amplitude can be produced by (A=3.25, C=135, p=220)
+  or by (A=2.8, C=155, p=195) — the effects of higher connectivity and lower input can
+  compensate for lower excitatory gain. The model output looks the same; the underlying
+  "explanation" is completely different. Any fitting procedure that returns a single "best"
+  parameter set without acknowledging this ambiguity is overstating its certainty.
+</div>
+
+<p>
+  Non-identifiability is not a bug — it is an inherent property of fitting a complex model
+  to summary statistics. Strategies for dealing with it include:
+</p>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Strategy</th><th>Approach</th><th>Trade-off</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Fix known parameters</strong></td>
+      <td>Set physiological constants (e0, v0, r, a, b) to literature values and fit only
+        the remaining parameters (A, B, C, p, sigma).</td>
+      <td>Reduces the solution space but assumes the fixed values are correct for this
+        patient and brain region.</td>
+    </tr>
+    <tr>
+      <td><strong>Regularization</strong></td>
+      <td>Add a penalty term that favors parameter values close to physiological defaults.
+        The optimizer can deviate, but only if the data strongly demands it.</td>
+      <td>Biases toward "normal" values — which is usually desirable for clinical
+        interpretation but may miss genuinely abnormal physiology.</td>
+    </tr>
+    <tr>
+      <td><strong>Posterior sampling</strong></td>
+      <td>Instead of finding one "best" point, sample the full distribution of parameter
+        values that explain the data (Bayesian inference, MCMC, or ensemble methods).</td>
+      <td>Computationally expensive. Returns a distribution, not a single answer —
+        harder to interpret but more honest.</td>
+    </tr>
+    <tr>
+      <td><strong>Use more features</strong></td>
+      <td>Match not just the PSD but also time-domain statistics (Hjorth parameters, line
+        length), cross-frequency coupling, or temporal dynamics — adding constraints
+        narrows the space of viable solutions.</td>
+      <td>Requires the model to be accurate across all those dimensions — which it may
+        not be, introducing new mismatches.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  A well-designed fitting engine should account for this reality. Rather than returning
+  a single "answer," it is valuable to expose the loss landscape and use multi-start
+  optimization to map out the space of viable solutions.
+</p>
+
+<h3>What the Model Cannot Represent</h3>
+
+<p>
+  Some aspects of real SEEG data are structurally absent from the Jansen-Rit model.
+  These are not parameter-tuning problems — they are limitations of the model's
+  mathematical structure:
+</p>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Phenomenon</th><th>In real data</th><th>In Jansen-Rit</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Volume conduction</strong></td>
+      <td>Each electrode picks up a weighted mix of activity from many nearby sources.
+        Signal is spatially blurred.</td>
+      <td>Each model instance represents one isolated column. No spatial mixing between
+        sources unless explicitly added as a forward model.</td>
+    </tr>
+    <tr>
+      <td><strong>Non-stationarity</strong></td>
+      <td>EEG changes character constantly — arousal state shifts, transient events,
+        slow drifts in excitability over minutes.</td>
+      <td>Parameters are fixed for the entire simulation. The model produces stationary
+        output by design. Slow parameter modulation must be added externally.</td>
+    </tr>
+    <tr>
+      <td><strong>High-frequency oscillations</strong></td>
+      <td>Ripples (80–250 Hz) and fast ripples (250–500 Hz) are clinically important
+        biomarkers in epilepsy.</td>
+      <td>The PSP time constants (a=100, b=50 Hz) act as low-pass filters. The model
+        cannot generate oscillations much above 30–40 Hz.</td>
+    </tr>
+    <tr>
+      <td><strong>Multiple rhythms</strong></td>
+      <td>Real EEG contains simultaneous alpha, beta, gamma, theta activity.</td>
+      <td>A single JR column produces one dominant frequency. Multiple rhythms require
+        coupling multiple model instances or using extended models (Wendling).</td>
+    </tr>
+    <tr>
+      <td><strong>Measurement noise</strong></td>
+      <td>Amplifier noise, line noise (50/60 Hz), movement artifacts.</td>
+      <td>Model output is clean. Measurement artifacts must be modeled separately or
+        removed from the real data before comparison.</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout callout-key">
+  <strong>Models are tools, not truth</strong>
+  A neural mass model is useful when it captures the features you care about, not when
+  it reproduces every aspect of the signal. The Jansen-Rit model is good at explaining
+  dominant oscillatory rhythms and transitions between activity regimes. It is not trying
+  to be a full simulation of everything an electrode records. The art of model-based EEG
+  analysis is choosing which features to match and which to acknowledge as outside the
+  model's scope.
+</div>
+
+<h3>Implications for Model Fitting</h3>
+
+<p>
+  These gaps have practical implications for any fitting procedure built on top of the Jansen-Rit model:
+</p>
+
+<ol>
+  <li><strong>Metric selection matters more than optimizer choice.</strong> Choosing which
+    features to match (PSD peaks vs. broadband power vs. time-domain statistics) implicitly
+    decides which aspects of the data the model is asked to explain — and which are ignored.</li>
+  <li><strong>Residual structure is informative.</strong> When the best-fit model still does not
+    match certain features, that mismatch tells you something — the signal contains
+    components (1/f noise, HFOs, artifacts) outside the model's scope.</li>
+  <li><strong>Confidence requires exploration.</strong> A single optimized parameter set is
+    a point estimate. To know how much to trust it, you need to explore the neighborhood —
+    are there other parameter sets that fit nearly as well? How sensitive is the fit to
+    small perturbations?</li>
+  <li><strong>Pre-processing is part of the model.</strong> Re-referencing scheme, filtering,
+    artifact rejection, and epoch selection all shape the data the model sees. Two different
+    pre-processing pipelines applied to the same recording can yield different "best-fit"
+    parameters.</li>
+</ol>
+
+<h2>Further Reading</h2>
+
+<ul>
+  <li>Jansen, B.H. &amp; Rit, V.G. (1995). Electroencephalogram and visual evoked potential generation in a mathematical model of coupled cortical columns. <em>Biological Cybernetics</em>, 73(4), 357-366. <a href="https://doi.org/10.1007/BF00199471">doi:10.1007/BF00199471</a></li>
+  <li>David, O. &amp; Friston, K.J. (2003). A neural mass model for MEG/EEG: coupling and neuronal dynamics. <em>NeuroImage</em>, 20(3), 1743-1755. <a href="https://doi.org/10.1016/j.neuroimage.2003.07.015">doi:10.1016/j.neuroimage.2003.07.015</a></li>
+  <li>Wendling, F., et al. (2002). Epileptic fast activity can be explained by a model of impaired GABAergic dendritic inhibition. <em>European Journal of Neuroscience</em>, 15(9), 1499-1508. <a href="https://doi.org/10.1046/j.1460-9568.2002.01985.x">doi:10.1046/j.1460-9568.2002.01985.x</a></li>
+  <li>Donoghue, T., et al. (2020). Parameterizing neural power spectra into periodic and aperiodic components. <em>Nature Neuroscience</em>, 23(12), 1655-1665. <a href="https://doi.org/10.1038/s41593-020-00744-x">doi:10.1038/s41593-020-00744-x</a> [Spectral parameterization / FOOOF]</li>
+  <li>He, B.J. (2014). Scale-free brain activity: past, present, and future. <em>Trends in Cognitive Sciences</em>, 18(9), 480-487. <a href="https://doi.org/10.1016/j.tics.2014.04.003">doi:10.1016/j.tics.2014.04.003</a> [1/f noise in neural signals]</li>
+  <li>Raue, A., et al. (2009). Structural and practical identifiability analysis of partially observed dynamical models by exploiting the profile likelihood. <em>Bioinformatics</em>, 25(15), 1923-1929. <a href="https://doi.org/10.1093/bioinformatics/btp358">doi:10.1093/bioinformatics/btp358</a> [Non-identifiability in ODE models]</li>
+</ul>
+
+</article>
+</main>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// Plotly dark theme matching docs CSS variables
+// ═══════════════════════════════════════════════════════════════════════════
+const plotLayout = {
+  paper_bgcolor: '#1a1d27',
+  plot_bgcolor: '#1a1d27',
+  font: { color: '#dde1f0', family: '-apple-system, sans-serif', size: 12 },
+  margin: { t: 30, r: 20, b: 40, l: 55 },
+  xaxis: { gridcolor: '#2e3452', zerolinecolor: '#2e3452' },
+  yaxis: { gridcolor: '#2e3452', zerolinecolor: '#2e3452' },
+};
+const plotConfig = { responsive: true, displayModeBar: false };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 1. Interactive Sigmoid
+// ═══════════════════════════════════════════════════════════════════════════
+function sigmoid(v, e0, v0, r) {
+  const ex = Math.min(Math.max(r * (v0 - v), -500), 500);
+  return 2 * e0 / (1 + Math.exp(ex));
+}
+
+function updateSigmoid() {
+  const e0 = parseFloat(document.getElementById('sl-e0').value);
+  const v0 = parseFloat(document.getElementById('sl-v0').value);
+  const r  = parseFloat(document.getElementById('sl-r').value);
+  document.getElementById('val-e0').textContent = e0.toFixed(1);
+  document.getElementById('val-v0').textContent = v0.toFixed(1);
+  document.getElementById('val-r').textContent  = r.toFixed(2);
+
+  const vArr = [], sArr = [];
+  for (let v = -5; v <= 20; v += 0.1) { vArr.push(v); sArr.push(sigmoid(v, e0, v0, r)); }
+
+  Plotly.react('sigmoid-plot', [
+    { x: vArr, y: sArr, type: 'scatter', mode: 'lines', line: { color: '#5b8dee', width: 2.5 } },
+    { x: [v0], y: [e0], type: 'scatter', mode: 'markers', marker: { color: '#fb923c', size: 9 },
+      hovertemplate: 'v0=%{x:.1f}, e0=%{y:.1f}<extra>half-max</extra>' },
+  ], {
+    ...plotLayout,
+    xaxis: { ...plotLayout.xaxis, title: 'Membrane potential v (mV)' },
+    yaxis: { ...plotLayout.yaxis, title: 'Firing rate S(v) (Hz)', range: [0, Math.max(2*e0+0.5, 6)] },
+    showlegend: false,
+  }, plotConfig);
+}
+
+document.getElementById('sl-e0').addEventListener('input', updateSigmoid);
+document.getElementById('sl-v0').addEventListener('input', updateSigmoid);
+document.getElementById('sl-r').addEventListener('input', updateSigmoid);
+updateSigmoid();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2. Live Jansen-Rit simulation
+// ═══════════════════════════════════════════════════════════════════════════
+function jrDerivatives(y, pIn, A, B, a, b, C1, C2, C3, C4, e0, v0, r) {
+  const S = (v) => sigmoid(v, e0, v0, r);
+  const dy = new Float64Array(6);
+  dy[0] = y[3];
+  dy[1] = y[4];
+  dy[2] = y[5];
+  dy[3] = A*a*S(y[1]-y[2]) - 2*a*y[3] - a*a*y[0];
+  dy[4] = A*a*(pIn + C2*S(C1*y[0])) - 2*a*y[4] - a*a*y[1];
+  dy[5] = B*b*C4*S(C3*y[0]) - 2*b*y[5] - b*b*y[2];
+  return dy;
+}
+
+function rk4Step(y, dt, pIn, A, B, a, b, C1, C2, C3, C4, e0, v0, r) {
+  const args = [pIn, A, B, a, b, C1, C2, C3, C4, e0, v0, r];
+  const k1 = jrDerivatives(y, ...args);
+  const y2 = y.map((v,i) => v + 0.5*dt*k1[i]);
+  const k2 = jrDerivatives(y2, ...args);
+  const y3 = y.map((v,i) => v + 0.5*dt*k2[i]);
+  const k3 = jrDerivatives(y3, ...args);
+  const y4 = y.map((v,i) => v + dt*k3[i]);
+  const k4 = jrDerivatives(y4, ...args);
+  return y.map((v,i) => v + (dt/6)*(k1[i] + 2*k2[i] + 2*k3[i] + k4[i]));
+}
+
+function simulateJR(p, sigma, C, duration, dt, outFs) {
+  const A = 3.25, B = 22.0, a = 100.0, b = 50.0;
+  const e0 = 2.5, v0 = 6.0, r = 0.56;
+  const C1 = C, C2 = 0.8*C, C3 = 0.25*C, C4 = 0.25*C;
+  const nSteps = Math.ceil(duration / dt);
+  const decimFactor = Math.round(1 / (dt * outFs));
+
+  let y = [0,0,0,0,0,0];
+  const output = [];
+  for (let i = 0; i < nSteps; i++) {
+    const pNoise = p + sigma * gaussRand();
+    y = rk4Step(y, dt, pNoise, A, B, a, b, C1, C2, C3, C4, e0, v0, r);
+    if (i % decimFactor === 0) { output.push(y[1] - y[2]); }
+  }
+  return output;
+}
+
+// Box-Muller transform for Gaussian random numbers
+let _spare = null;
+function gaussRand() {
+  if (_spare !== null) { const v = _spare; _spare = null; return v; }
+  let u, v, s;
+  do { u = Math.random()*2-1; v = Math.random()*2-1; s = u*u+v*v; } while (s >= 1 || s === 0);
+  const mul = Math.sqrt(-2*Math.log(s)/s);
+  _spare = v * mul;
+  return u * mul;
+}
+
+let simTimeout = null;
+function updateSimulation() {
+  if (simTimeout) clearTimeout(simTimeout);
+  simTimeout = setTimeout(runSimulation, 50);
+}
+
+function runSimulation() {
+  const p     = parseFloat(document.getElementById('sl-p').value);
+  const sigma = parseFloat(document.getElementById('sl-sigma').value);
+  const C     = parseFloat(document.getElementById('sl-C').value);
+  document.getElementById('val-p').textContent     = p + ' Hz';
+  document.getElementById('val-sigma').textContent = sigma + ' Hz';
+  document.getElementById('val-C').textContent     = C;
+
+  const badge = document.getElementById('regime-badge');
+  if (p < 110) {
+    badge.textContent = 'noise'; badge.className = 'regime-label regime-noise';
+  } else if (p <= 320) {
+    badge.textContent = 'alpha'; badge.className = 'regime-label regime-alpha';
+  } else {
+    badge.textContent = 'spikes'; badge.className = 'regime-label regime-spikes';
+  }
+
+  const fs = 512;
+  const signal = simulateJR(p, sigma, C, 2.0, 1e-4, fs);
+  const times = signal.map((_, i) => i / fs);
+
+  Plotly.react('sim-plot', [{
+    x: times, y: signal, type: 'scatter', mode: 'lines',
+    line: { color: '#4ade80', width: 1 },
+  }], {
+    ...plotLayout,
+    xaxis: { ...plotLayout.xaxis, title: 'Time (s)' },
+    yaxis: { ...plotLayout.yaxis, title: 'Output (mV)', autorange: true },
+    showlegend: false,
+    title: { text: 'Jansen-Rit output  (y1 − y2)', font: { size: 13, color: '#8890b0' }, x: 0.02, xanchor: 'left' },
+  }, plotConfig);
+}
+
+document.getElementById('sl-p').addEventListener('input', updateSimulation);
+document.getElementById('sl-sigma').addEventListener('input', updateSimulation);
+document.getElementById('sl-C').addEventListener('input', updateSimulation);
+runSimulation();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3. Parameter regime sweep
+// ═══════════════════════════════════════════════════════════════════════════
+function runSweep() {
+  const pValues = [];
+  const rmsValues = [];
+  for (let p = 0; p <= 500; p += 5) {
+    const sig = simulateJR(p, 22, 135, 2.0, 2e-4, 256);
+    // discard first 0.5s transient
+    const start = Math.floor(0.5 * 256);
+    let sumSq = 0;
+    for (let i = start; i < sig.length; i++) sumSq += sig[i]*sig[i];
+    const rms = Math.sqrt(sumSq / (sig.length - start));
+    pValues.push(p);
+    rmsValues.push(rms);
+  }
+
+  // colour each segment by regime
+  const colors = pValues.map(p => p < 110 ? '#5b8dee' : p <= 320 ? '#4ade80' : '#f87171');
+
+  Plotly.react('sweep-plot', [{
+    x: pValues, y: rmsValues, type: 'scatter', mode: 'lines+markers',
+    marker: { color: colors, size: 5 },
+    line: { color: '#8890b0', width: 1 },
+  }], {
+    ...plotLayout,
+    xaxis: { ...plotLayout.xaxis, title: 'Mean input p (Hz)' },
+    yaxis: { ...plotLayout.yaxis, title: 'RMS amplitude (mV)' },
+    showlegend: false,
+    title: { text: 'Output amplitude vs. input drive', font: { size: 13, color: '#8890b0' }, x: 0.02, xanchor: 'left' },
+    shapes: [
+      { type: 'rect', x0: 0, x1: 110, y0: 0, y1: 1, yref: 'paper', fillcolor: 'rgba(91,141,238,0.06)', line: {width:0} },
+      { type: 'rect', x0: 110, x1: 320, y0: 0, y1: 1, yref: 'paper', fillcolor: 'rgba(77,222,128,0.06)', line: {width:0} },
+      { type: 'rect', x0: 320, x1: 500, y0: 0, y1: 1, yref: 'paper', fillcolor: 'rgba(248,113,113,0.06)', line: {width:0} },
+    ],
+    annotations: [
+      { x: 55, y: 1.02, yref: 'paper', text: 'noise', showarrow: false, font: {size:11, color:'#5b8dee'} },
+      { x: 215, y: 1.02, yref: 'paper', text: 'alpha', showarrow: false, font: {size:11, color:'#4ade80'} },
+      { x: 410, y: 1.02, yref: 'paper', text: 'spikes', showarrow: false, font: {size:11, color:'#f87171'} },
+    ],
+  }, plotConfig);
+}
+// Run sweep after a short delay so the page renders first
+setTimeout(runSweep, 100);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4. 1/f noise comparison
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Generate 1/f noise via spectral synthesis (inverse FFT of shaped spectrum)
+function generatePinkNoise(n, exponent) {
+  // Build magnitude spectrum: power ∝ 1/f^exponent
+  const re = new Float64Array(n);
+  const im = new Float64Array(n);
+  re[0] = 0; im[0] = 0;
+  for (let k = 1; k <= n/2; k++) {
+    const mag = 1.0 / Math.pow(k, exponent / 2);
+    const phase = Math.random() * 2 * Math.PI;
+    re[k] = mag * Math.cos(phase);
+    im[k] = mag * Math.sin(phase);
+    if (k < n/2) {
+      re[n - k] =  re[k];
+      im[n - k] = -im[k];
+    }
+  }
+  // Simple DFT inverse (n is small enough for O(n²))
+  const out = new Float64Array(n);
+  for (let t = 0; t < n; t++) {
+    let sum = 0;
+    for (let k = 0; k < n; k++) {
+      const angle = 2 * Math.PI * k * t / n;
+      sum += re[k] * Math.cos(angle) - im[k] * Math.sin(angle);
+    }
+    out[t] = sum / n;
+  }
+  // Normalize to unit std
+  let mean = 0, std = 0;
+  for (let i = 0; i < n; i++) mean += out[i];
+  mean /= n;
+  for (let i = 0; i < n; i++) std += (out[i] - mean) ** 2;
+  std = Math.sqrt(std / n);
+  if (std > 0) for (let i = 0; i < n; i++) out[i] = (out[i] - mean) / std;
+  return out;
+}
+
+// Compute PSD via periodogram (simple |FFT|²)
+function computePSD(signal, fs) {
+  const n = signal.length;
+  const freqs = [], psd = [];
+  for (let k = 1; k <= n/2; k++) {
+    let re = 0, im = 0;
+    for (let t = 0; t < n; t++) {
+      const angle = 2 * Math.PI * k * t / n;
+      re += signal[t] * Math.cos(angle);
+      im -= signal[t] * Math.sin(angle);
+    }
+    freqs.push(k * fs / n);
+    psd.push((re*re + im*im) / (n * fs));
+  }
+  return { freqs, psd };
+}
+
+function updateOneFPlot() {
+  const exponent = parseFloat(document.getElementById('sl-onef-exp').value);
+  const mix = parseFloat(document.getElementById('sl-onef-mix').value);
+  document.getElementById('val-onef-exp').textContent = exponent.toFixed(1);
+  document.getElementById('val-onef-mix').textContent = mix.toFixed(2);
+
+  const fs = 256;
+  const n = 512; // 2 seconds
+
+  // Generate JR signal
+  const jr = simulateJR(220, 22, 135, 2.0, 1e-4, fs).slice(0, n);
+
+  // Generate 1/f noise, scale to match JR amplitude
+  const pink = generatePinkNoise(n, exponent);
+  let jrStd = 0;
+  { let m = 0; for (let i = 0; i < n; i++) m += jr[i]; m /= n;
+    for (let i = 0; i < n; i++) jrStd += (jr[i]-m)**2; jrStd = Math.sqrt(jrStd/n); }
+  for (let i = 0; i < n; i++) pink[i] *= jrStd;
+
+  // Mix
+  const mixed = new Float64Array(n);
+  for (let i = 0; i < n; i++) mixed[i] = (1-mix)*jr[i] + mix*pink[i];
+
+  // Compute PSDs
+  const psdJR = computePSD(jr, fs);
+  const psdMixed = computePSD(Array.from(mixed), fs);
+
+  // Smooth PSDs with simple moving average (5-point)
+  function smooth(arr, w) {
+    const out = [];
+    for (let i = 0; i < arr.length; i++) {
+      let s = 0, c = 0;
+      for (let j = Math.max(0,i-w); j <= Math.min(arr.length-1,i+w); j++) { s += arr[j]; c++; }
+      out.push(s/c);
+    }
+    return out;
+  }
+  const smoothW = 3;
+
+  Plotly.react('onef-plot', [
+    {
+      x: psdJR.freqs, y: smooth(psdJR.psd, smoothW),
+      type: 'scatter', mode: 'lines',
+      line: { color: '#5b8dee', width: 1.5 },
+      name: 'JR only',
+    },
+    {
+      x: psdMixed.freqs, y: smooth(psdMixed.psd, smoothW),
+      type: 'scatter', mode: 'lines',
+      line: { color: '#fb923c', width: 2 },
+      name: 'JR + 1/f',
+    },
+  ], {
+    ...plotLayout,
+    xaxis: { ...plotLayout.xaxis, title: 'Frequency (Hz)', type: 'log', range: [Math.log10(1), Math.log10(128)] },
+    yaxis: { ...plotLayout.yaxis, title: 'Power (log)', type: 'log' },
+    showlegend: true,
+    legend: { x: 0.7, y: 0.95, bgcolor: 'rgba(0,0,0,0)', font: { size: 11 } },
+    title: { text: 'Power spectrum: JR model vs. JR + 1/f background', font: { size: 13, color: '#8890b0' }, x: 0.02, xanchor: 'left' },
+  }, plotConfig);
+}
+
+// Use small n for DFT so defer slightly
+setTimeout(updateOneFPlot, 200);
+document.getElementById('sl-onef-exp').addEventListener('input', updateOneFPlot);
+document.getElementById('sl-onef-mix').addEventListener('input', updateOneFPlot);
+</script>
+
+</body>
+</html>

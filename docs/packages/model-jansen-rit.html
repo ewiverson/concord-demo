@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>concord-model-jansen-rit — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Packages<span class="sep">›</span> Model: Jansen-Rit</div>
+<h1>concord-model-jansen-rit</h1>
+<p class="subtitle">Classic 3-population cortical column model (Jansen &amp; Rit, 1995)</p>
+
+<div class="callout callout-key">
+  <strong>Role in the system</strong>
+  The first implemented neural mass model. Takes a ParameterVector, integrates the
+  Jansen-Rit ODEs using RK4, and produces a ModelOutput containing the simulated SEEG
+  signal plus all internal state variables. Registered via entry_points as
+  <code>concord.models:jansen_rit</code>.
+</div>
+
+<p>
+  For a conceptual introduction to neural mass models and the Jansen-Rit equations,
+  see <a href="../background/neural-mass-models.html">Neural Mass Models</a> (background reading).
+</p>
+
+<h2>Package Structure</h2>
+<pre><code>concord-model-jansen-rit/
+  src/concord_model_jansen_rit/
+    __init__.py       exports JansenRit
+    equations.py      pure derivative function (6 ODEs)
+    model.py          JansenRit class implementing Model ABC</code></pre>
+
+<h2>equations.py</h2>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">jansen_rit_derivatives(y, t, p_input, A, B, a, b, C1, C2, C3, C4, e0, v0, r) → ndarray</span></div>
+  <div class="api-body">
+    <p>
+      Compute derivatives of the 6-variable Jansen-Rit ODE system. This is a pure numerical
+      function with no Model ABC knowledge — it can be called directly for testing or
+      used by the integrator.
+    </p>
+    <table>
+      <thead><tr><th>Parameter</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>y</td><td>State vector, shape (6,). [y0, y1, y2, y3, y4, y5]</td></tr>
+        <tr><td>t</td><td>Current time (kept for integrator interface)</td></tr>
+        <tr><td>p_input</td><td>Instantaneous external input (mean + noise sample)</td></tr>
+        <tr><td>A, B</td><td>Max EPSP / IPSP amplitude (mV)</td></tr>
+        <tr><td>a, b</td><td>EPSP / IPSP time constants (1/s)</td></tr>
+        <tr><td>C1..C4</td><td>Connectivity constants</td></tr>
+        <tr><td>e0, v0, r</td><td>Sigmoid parameters</td></tr>
+      </tbody>
+    </table>
+    <p>
+      State variable mapping: y0 = excitatory PSP on pyramidal cells,
+      y1 = PSP from external + feedback on excitatory interneurons,
+      y2 = inhibitory PSP on pyramidal cells.
+      y3, y4, y5 are their time derivatives.
+      Output signal = y1 - y2.
+    </p>
+  </div>
+</div>
+
+<h2>model.py — JansenRit</h2>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method cls">ABC</span><span class="api-path">JansenRit(Model)</span></div>
+  <div class="api-body">
+    <p>
+      Implements the <a href="core.html">Model ABC</a>. Single-node cortical column
+      producing alpha-band (~10 Hz) oscillations at default parameters.
+    </p>
+    <table>
+      <thead><tr><th>Constructor</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>dt</td><td>float</td><td>Internal integration time step in seconds. Default 1e-4 (0.1 ms).</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method prop">property</span><span class="api-path">JansenRit.name → str</span></div>
+  <div class="api-body"><p>Returns <code>"jansen_rit"</code>.</p></div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">JansenRit.default_parameters() → ParameterVector</span></div>
+  <div class="api-body">
+    <p>Returns a ParameterVector with 10 named parameters, their default values, and bounds:</p>
+    <table>
+      <thead><tr><th>Name</th><th>Default</th><th>Lower</th><th>Upper</th><th>Units</th></tr></thead>
+      <tbody>
+        <tr><td>A</td><td>3.25</td><td>1.0</td><td>10.0</td><td>mV</td></tr>
+        <tr><td>B</td><td>22.0</td><td>5.0</td><td>50.0</td><td>mV</td></tr>
+        <tr><td>a</td><td>100.0</td><td>50.0</td><td>200.0</td><td>1/s</td></tr>
+        <tr><td>b</td><td>50.0</td><td>10.0</td><td>100.0</td><td>1/s</td></tr>
+        <tr><td>C</td><td>135.0</td><td>50.0</td><td>500.0</td><td></td></tr>
+        <tr><td>e0</td><td>2.5</td><td>1.0</td><td>5.0</td><td>1/s</td></tr>
+        <tr><td>v0</td><td>6.0</td><td>3.0</td><td>12.0</td><td>mV</td></tr>
+        <tr><td>r</td><td>0.56</td><td>0.1</td><td>1.0</td><td>1/mV</td></tr>
+        <tr><td>p</td><td>220.0</td><td>0.0</td><td>500.0</td><td>Hz</td></tr>
+        <tr><td>sigma</td><td>22.0</td><td>0.0</td><td>100.0</td><td>Hz</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Connectivity constants are derived from C: C1 = C, C2 = 0.8C, C3 = 0.25C, C4 = 0.25C.
+    </p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">JansenRit.simulate(parameters, duration_s, fs, seed=None) → ModelOutput</span></div>
+  <div class="api-body">
+    <p>Run the simulation and return a ModelOutput.</p>
+    <table>
+      <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>parameters</td><td>ParameterVector</td><td>Model parameters (from <code>default_parameters()</code> or modified)</td></tr>
+        <tr><td>duration_s</td><td>float</td><td>Simulation duration in seconds</td></tr>
+        <tr><td>fs</td><td>float</td><td>Output sampling rate in Hz</td></tr>
+        <tr><td>seed</td><td>int | None</td><td>Random seed for reproducibility. None = non-reproducible.</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Integration uses RK4 at the internal time step (default 0.1 ms). External input noise
+      is pre-generated for the full duration. After integration, the output is downsampled
+      to the requested <code>fs</code> using <code>scipy.signal.decimate</code>.
+    </p>
+    <p>The returned ModelOutput contains:</p>
+    <ul>
+      <li><code>data</code> — shape (1, n_samples): the simulated signal (y1 - y2)</li>
+      <li><code>state_variables</code> — dict with keys "y0" through "y5", each shape (1, n_samples)</li>
+      <li><code>time_axis</code> — time stamps in seconds</li>
+      <li><code>node_labels</code> — ["node_0"]</li>
+    </ul>
+  </div>
+</div>
+
+<h2>Entry Point Registration</h2>
+
+<p>In <code>pyproject.toml</code>:</p>
+<pre><code>[project.entry-points.<span class="st">"concord.models"</span>]
+jansen_rit = <span class="st">"concord_model_jansen_rit:JansenRit"</span></code></pre>
+<p>
+  This allows <code>concord-fit</code> (and other discovery tools) to find the model without hard imports.
+  See <a href="../background/entry-points.html">Python Entry Points</a> for how discovery works.
+</p>
+
+<h2>Usage Example</h2>
+
+<pre><code><span class="kw">from</span> concord_model_jansen_rit <span class="kw">import</span> JansenRit
+
+model = JansenRit()
+params = model.default_parameters()
+
+<span class="cm"># Simulate 3 seconds at 1024 Hz</span>
+result = model.simulate(params, duration_s=<span class="nb">3.0</span>, fs=<span class="nb">1024.0</span>, seed=<span class="nb">42</span>)
+
+<span class="cm"># The output signal</span>
+signal = result.data[<span class="nb">0</span>, :]          <span class="cm"># shape (n_samples,)</span>
+times = result.time_axis             <span class="cm"># shape (n_samples,)</span>
+
+<span class="cm"># Modify a parameter</span>
+p_idx = params.names.index(<span class="st">"p"</span>)
+params.values[p_idx] = <span class="nb">300.0</span>        <span class="cm"># higher input → more spiking</span>
+result2 = model.simulate(params, duration_s=<span class="nb">3.0</span>, fs=<span class="nb">1024.0</span>, seed=<span class="nb">42</span>)</code></pre>
+
+</article>
+</main>
+
+</body>
+</html>

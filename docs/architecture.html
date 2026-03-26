@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Architecture — Montage Concord</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav><script src="nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="index.html">Home</a><span class="sep">›</span> Architecture</div>
+<h1>Architecture</h1>
+<p class="subtitle">How the packages fit together and why they are organized this way</p>
+
+<h2>Core Principle: Layered Independence</h2>
+
+<p>
+  Montage Concord is structured so that each layer only knows about the layers below it.
+  No package ever imports from a package at the same level or above.
+  This makes each package independently testable and replaceable.
+</p>
+
+<pre class="mermaid">
+graph TD
+  subgraph "Layer 4 — Interaction"
+    SERVER["concord-server\nFastAPI + browser dashboard"]
+  end
+  subgraph "Layer 3 — Visualization"
+    VIZ["concord-viz\nTimeseries, spectrogram, PSD, metric prep"]
+  end
+  subgraph "Layer 2 — Analysis & Simulation"
+    MU["metrics-\nunivariate"]
+    MS["metrics-\nspectral"]
+    MC["metrics-\nconnectivity"]
+    MJR["model-\njansen-rit"]
+  end
+  subgraph " "
+    MUTILS["metrics-utils\nWindowing, filtering, analytic signal"]
+    MODUTILS["models-utils\nIntegrators, noise, sigmoids"]
+  end
+  subgraph "Layer 1 — I/O"
+    IO["concord-io\nEDF reader, BIDS scanner, re-referencing"]
+  end
+  subgraph "Layer 0 — Foundation"
+    CORE["concord-core\nRecording, MetricResult, ParameterVector,\nModelOutput, Metric & Model ABCs"]
+  end
+
+  SERVER --> VIZ
+  VIZ --> MU & MS & MC
+  MU & MS & MC --> MUTILS
+  MJR --> MODUTILS
+  MUTILS --> IO
+  MODUTILS --> IO
+  IO --> CORE
+</pre>
+
+<h2>The Core Types</h2>
+
+<p>
+  Data flows through core container types and ABCs defined in <a href="packages/core.html">concord-core</a>.
+  Every other package speaks this common language.
+</p>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Type</th><th>What it holds</th><th>Who creates it</th><th>Who reads it</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Recording</td>
+      <td>Raw or re-referenced EEG signal: 2D array (channels × samples), sampling rate, channel names, montage, events, metadata</td>
+      <td>concord-io</td>
+      <td>metrics, viz, server</td>
+    </tr>
+    <tr>
+      <td>MetricResult</td>
+      <td>Output of a metric computation: N-D array + channel labels + optional frequency/time axes + units</td>
+      <td>Metric subclasses</td>
+      <td>viz, server, fit</td>
+    </tr>
+    <tr>
+      <td>ParameterVector</td>
+      <td>Named model parameter values + lower/upper bounds for optimization</td>
+      <td>Model.default_parameters()</td>
+      <td>Model.simulate(), fit</td>
+    </tr>
+    <tr>
+      <td>ModelOutput</td>
+      <td>Simulated signal: 2D array (nodes × samples) + all state variables + parameters used</td>
+      <td>Model subclasses</td>
+      <td>metrics, viz, server, fit</td>
+    </tr>
+    <tr>
+      <td>Metric (ABC)</td>
+      <td>Interface contract: name, requirements, compute()</td>
+      <td>concord-core defines it</td>
+      <td>all metric packages implement it; fit discovers them</td>
+    </tr>
+    <tr>
+      <td>Model (ABC)</td>
+      <td>Interface contract: name, default_parameters(), simulate()</td>
+      <td>concord-core defines it</td>
+      <td>all model packages implement it; fit discovers them</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Design Rules</h2>
+
+<h3>No Cross-Imports at the Same Level</h3>
+<p>
+  Metric packages (<code>metrics-univariate</code>, <code>metrics-spectral</code>, etc.) must not import each other.
+  If they need shared signal-processing code, it goes in <code>metrics-utils</code>.
+  Similarly, model packages must not import each other — shared math goes in <code>models-utils</code>.
+</p>
+
+<h3>Immutable Data Containers</h3>
+<p>
+  <code>Recording</code> and <code>MetricResult</code> are Python dataclasses. Functions that transform data
+  (re-referencing, filtering, slicing) always return a <em>new</em> object — they never modify in place.
+  This makes the code easier to reason about and test.
+</p>
+
+<h3>Stateless, Pickle-Safe Functions</h3>
+<p>
+  Metric classes carry only their configuration parameters (e.g., window size).
+  They do not store results. This means you can pickle a metric, send it to a worker process,
+  call <code>compute()</code>, and get a result back — critical for parallel fitting later.
+</p>
+
+<h3>Self-Registration via Entry Points</h3>
+<p>
+  Metric and model packages register themselves in their <code>pyproject.toml</code> under
+  <code>[project.entry-points]</code>. The <code>concord-fit</code> package (and others) can
+  discover all installed metrics without any hard import list. See
+  <a href="background/entry-points.html">Python Entry Points</a> for how this works.
+</p>
+
+<h3>Package Size Limit</h3>
+<p>
+  Each sub-package stays under ~1500 lines of implementation code.
+  If a package exceeds this, it is a signal to split it further.
+</p>
+
+<h2>Package Roles at a Glance</h2>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Package</th><th>Layer</th><th>Role</th><th>Key rule</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>concord-core</td><td>0 — Foundation</td><td>Defines the shared language (types + interfaces)</td><td>Only numpy. No logic.</td></tr>
+    <tr><td>concord-io</td><td>1 — I/O</td><td>Reads files; produces Recordings</td><td>Only package that knows file formats</td></tr>
+    <tr><td>concord-metrics-utils</td><td>2 — Analysis support</td><td>Shared signal primitives (windowing, filtering)</td><td>No ABC knowledge; no cross-metric imports</td></tr>
+    <tr><td>concord-metrics-*</td><td>2 — Analysis</td><td>Each implements Metric ABC</td><td>No cross-imports between metric packages</td></tr>
+    <tr><td>concord-models-utils</td><td>2 — Simulation support</td><td>Integrators, noise, sigmoids</td><td>No ABC knowledge; no cross-model imports</td></tr>
+    <tr><td>concord-model-*</td><td>2 — Simulation</td><td>Each implements Model ABC (future)</td><td>No cross-imports between model packages</td></tr>
+    <tr><td>concord-viz</td><td>3 — Visualization</td><td>Pure: container → JSON dict for Plotly</td><td>Never modifies data; never computes metrics</td></tr>
+    <tr><td>concord-server</td><td>4 — Interaction</td><td>HTTP API + static frontend</td><td>Manages session state; routes to viz functions</td></tr>
+    <tr><td>concord-fit</td><td>4 — Optimization (future)</td><td>Discovers models/metrics; runs optimization</td><td>No hard imports of specific models/metrics</td></tr>
+    <tr><td>concord-connectome</td><td>2 — Connectivity (future)</td><td>Structural connectivity, parcellation</td><td>Separate from functional metrics</td></tr>
+  </tbody>
+</table>
+
+<h2>Python Conventions</h2>
+
+<ul>
+  <li><strong>Python 3.11</strong>, all type annotations using <code>from __future__ import annotations</code></li>
+  <li><strong>Import style:</strong> always <code>import numpy as np</code> — never <code>from numpy import array</code></li>
+  <li><strong>No nested functions</strong> — all functions defined at module top level for pickle safety</li>
+  <li><strong>src layout:</strong> each package has <code>src/concord_{name}/</code> so imports never accidentally use the repo directory</li>
+  <li><strong>pyproject.toml</strong> in every sub-package with editable install support</li>
+</ul>
+
+<h2>Development Workflow</h2>
+
+<p>
+  Each sub-package is designed to be developed in an isolated Claude Code session.
+  The workflow: read this architecture page, read the target package's own <code>CLAUDE.md</code>,
+  read the core ABCs, then implement.
+</p>
+
+<p>
+  Tests for a specific package:
+</p>
+<pre><code>pytest concord-{name}/tests/</code></pre>
+
+<p>
+  When a new dependency is added to a <code>pyproject.toml</code>, re-install:
+</p>
+<pre><code>pip install -e ./concord-{name}</code></pre>
+
+</article>
+</main>
+
+</body>
+</html>

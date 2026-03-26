@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>concord-metrics-univariate — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Packages<span class="sep">›</span> Metrics Univariate</div>
+<h1>concord-metrics-univariate</h1>
+<p class="subtitle">Time-domain, single-channel features: Line Length and Hjorth Parameters</p>
+
+<div class="callout callout-key">
+  <strong>Role in the system</strong>
+  Implements two classic EEG feature metrics. Each is a stateless class implementing the
+  <a href="core.html">Metric ABC</a>. They use <a href="metrics-utils.html">metrics-utils</a>
+  for windowing and produce <a href="core.html">MetricResult</a> containers.
+</div>
+
+<h2>Package Structure</h2>
+<pre><code>concord-metrics-univariate/
+  src/concord_metrics_univariate/
+    __init__.py       exports LineLength, HjorthParameters
+    line_length.py    LineLength metric
+    hjorth.py         HjorthParameters metric</code></pre>
+
+<h2>LineLength</h2>
+
+<p>
+  Line length is one of the simplest and most effective seizure detection features.
+  It measures how "wiggly" the signal is — how much total variation there is per unit time.
+  High line length indicates fast, high-amplitude activity characteristic of seizures.
+</p>
+
+<p><strong>Formula:</strong> <code>LL = Σ |x[n] − x[n-1]|</code> — the sum of absolute first differences.</p>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method cls">class</span><span class="api-path">LineLength(window_s=None, step_s=None)</span></div>
+  <div class="api-body">
+    <table>
+      <thead><tr><th>Parameter</th><th>Default</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>window_s</td><td>None</td><td>Window length in seconds. If None, computes over the entire recording.</td></tr>
+        <tr><td>step_s</td><td>None</td><td>Step between windows. If None, defaults to window_s (non-overlapping). Ignored if window_s is None.</td></tr>
+      </tbody>
+    </table>
+    <p><strong>name:</strong> <code>"line_length"</code></p>
+    <p><strong>units:</strong> <code>"V"</code> (volts, since it's a sum of differences of voltage)</p>
+  </div>
+</div>
+
+<h3>Output shape</h3>
+
+<table class="data-table">
+  <thead><tr><th>Mode</th><th>data.shape</th><th>time_axis</th></tr></thead>
+  <tbody>
+    <tr><td>window_s = None (global)</td><td>(n_channels,)</td><td>None</td></tr>
+    <tr><td>window_s set</td><td>(n_channels, n_windows)</td><td>(n_windows,) — center time of each window</td></tr>
+  </tbody>
+</table>
+
+<h3>How it works</h3>
+<pre><code><span class="cm"># Windowed mode (simplified):</span>
+windows = segment(data, fs, window_s, step_s)  <span class="cm"># (n_ch, n_win, win_samples)</span>
+diff = np.diff(windows, axis=-<span class="nb">1</span>)               <span class="cm"># (n_ch, n_win, win_samples-1)</span>
+ll = np.sum(np.abs(diff), axis=-<span class="nb">1</span>)             <span class="cm"># (n_ch, n_win)</span></code></pre>
+
+<h2>HjorthParameters</h2>
+
+<p>
+  Hjorth parameters are three complementary descriptors proposed by Bo Hjorth (1970)
+  that characterize a signal's temporal complexity. They are computed from the signal
+  and its successive derivatives.
+</p>
+
+<table class="data-table">
+  <thead><tr><th>Parameter</th><th>Formula</th><th>Physical interpretation</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Activity</td>
+      <td><code>var(x)</code></td>
+      <td>Signal power (variance). High in high-amplitude bursts.</td>
+    </tr>
+    <tr>
+      <td>Mobility</td>
+      <td><code>std(x') / std(x)</code></td>
+      <td>Mean frequency of the signal. Proportional to the dominant frequency.</td>
+    </tr>
+    <tr>
+      <td>Complexity</td>
+      <td><code>mobility(x') / mobility(x)</code></td>
+      <td>How closely the signal resembles a pure sine wave. 1.0 = pure sine, higher = more complex/noisy.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>Here, <code>x'</code> is the first derivative (approximated as successive differences), and <code>x''</code> the second derivative.</p>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method cls">class</span><span class="api-path">HjorthParameters(window_s=None, step_s=None)</span></div>
+  <div class="api-body">
+    <table>
+      <thead><tr><th>Parameter</th><th>Default</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>window_s</td><td>None</td><td>Window length in seconds. If None, computes globally.</td></tr>
+        <tr><td>step_s</td><td>None</td><td>Step between windows.</td></tr>
+      </tbody>
+    </table>
+    <p><strong>name:</strong> <code>"hjorth_parameters"</code></p>
+    <p><strong>Degenerate channels:</strong> If a channel is constant (std=0), all three parameters are set to NaN rather than raising an error or producing Inf.</p>
+  </div>
+</div>
+
+<h3>Output shape</h3>
+
+<table class="data-table">
+  <thead><tr><th>Mode</th><th>data.shape</th><th>Axis 2 contents</th></tr></thead>
+  <tbody>
+    <tr><td>window_s = None</td><td>(n_channels, 3)</td><td>[activity, mobility, complexity]</td></tr>
+    <tr><td>window_s set</td><td>(n_channels, n_windows, 3)</td><td>[activity, mobility, complexity] per window</td></tr>
+  </tbody>
+</table>
+
+<p>The frontend accesses individual parameters by index: <code>data[:, :, 0]</code> = activity, <code>data[:, :, 1]</code> = mobility, <code>data[:, :, 2]</code> = complexity.</p>
+
+<h3>How it works</h3>
+<pre><code><span class="kw">def</span> <span class="nm">_hjorth_on_array</span>(x):
+    <span class="cm"># x: (..., n_samples) — last axis is time</span>
+    var_x   = np.var(x, axis=-<span class="nb">1</span>)
+    dx      = np.diff(x, axis=-<span class="nb">1</span>)
+    var_dx  = np.var(dx, axis=-<span class="nb">1</span>)
+    ddx     = np.diff(dx, axis=-<span class="nb">1</span>)
+    var_ddx = np.var(ddx, axis=-<span class="nb">1</span>)
+
+    activity   = var_x
+    mobility   = np.sqrt(var_dx / var_x)
+    complexity = np.sqrt(var_ddx / var_dx) / mobility
+    <span class="kw">return</span> np.stack([activity, mobility, complexity], axis=-<span class="nb">1</span>)</code></pre>
+
+<h2>Example Usage</h2>
+
+<pre><code><span class="kw">from</span> concord_io <span class="kw">import</span> read_bids_ieeg
+<span class="kw">from</span> concord_metrics_univariate <span class="kw">import</span> LineLength, HjorthParameters
+
+rec = read_bids_ieeg(<span class="st">"sub-HUP117_run-01_ieeg.edf"</span>)
+
+<span class="cm"># Line length: 1-second windows, no overlap</span>
+ll = LineLength(window_s=<span class="nb">1.0</span>).compute(rec)
+print(ll.data.shape)     <span class="cm"># (72, 300)  — 72 channels, 300 one-second windows</span>
+print(ll.time_axis[:3])  <span class="cm"># [0.5, 1.5, 2.5]  — center times</span>
+
+<span class="cm"># Hjorth: 2-second windows, 1-second step (50% overlap)</span>
+hjorth = HjorthParameters(window_s=<span class="nb">2.0</span>, step_s=<span class="nb">1.0</span>).compute(rec)
+print(hjorth.data.shape)        <span class="cm"># (72, 299, 3)</span>
+activity   = hjorth.data[:, :, <span class="nb">0</span>]   <span class="cm"># (72, 299)</span>
+mobility   = hjorth.data[:, :, <span class="nb">1</span>]
+complexity = hjorth.data[:, :, <span class="nb">2</span>]</code></pre>
+
+</article>
+</main>
+</body>
+</html>

@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JS ES Modules — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Background<span class="sep">›</span> JS ES Modules</div>
+<h1>JavaScript ES Modules</h1>
+<p class="subtitle">Background reading: how the frontend organizes code into separate files with import/export</p>
+
+<h2>The Old Way: Script Tags and Globals</h2>
+
+<p>
+  Historically, JavaScript had no module system. Every script loaded with a <code>&lt;script&gt;</code>
+  tag shared the same global scope. Any variable defined in one file was visible in all others —
+  which caused name collisions and made it impossible to tell where something came from.
+</p>
+
+<pre><code><span class="cm">&lt;!-- Old way: multiple scripts, all sharing globals --&gt;</span>
+&lt;script src="utils.js"&gt;&lt;/script&gt;   <span class="cm">&lt;!-- defines renderChart(), computeOffset() --&gt;</span>
+&lt;script src="app.js"&gt;&lt;/script&gt;    <span class="cm">&lt;!-- can accidentally overwrite renderChart --&gt;</span>
+</code></pre>
+
+<h2>ES Modules: Explicit Import and Export</h2>
+
+<p>
+  ES Modules (ESM) are the modern standard, introduced in ECMAScript 2015 (ES6).
+  Each file is its own module with its own private scope.
+  Variables and functions are only shared if explicitly <strong>exported</strong>,
+  and only imported where explicitly <strong>imported</strong>.
+</p>
+
+<pre><code><span class="cm">// timeseries.js — explicitly exports two things:</span>
+<span class="kw">export function</span> <span class="nm">renderTimeSeries</span>(div, data) {
+  <span class="cm">// ... Plotly rendering code ...</span>
+}
+
+<span class="kw">export function</span> <span class="nm">onZoomPan</span>(div, callback) {
+  <span class="cm">// ... event listener ...</span>
+}
+
+<span class="cm">// This stays private — not exported, not visible outside:</span>
+<span class="kw">function</span> <span class="nm">_buildTraces</span>(data) { ... }
+</code></pre>
+
+<pre><code><span class="cm">// app.js — explicitly imports what it needs:</span>
+<span class="kw">import</span> { renderTimeSeries, onZoomPan } <span class="kw">from</span> <span class="st">"./timeseries.js"</span>;
+
+<span class="cm">// Now these are available in this file only</span>
+renderTimeSeries(div, data);
+</code></pre>
+
+<h2>How Modules Are Loaded in the Browser</h2>
+
+<p>
+  In HTML, you mark the entry-point script as a module with <code>type="module"</code>:
+</p>
+
+<pre><code><span class="cm">&lt;!-- index.html --&gt;</span>
+&lt;script type="module" src="app.js"&gt;&lt;/script&gt;
+</code></pre>
+
+<p>
+  The browser loads <code>app.js</code>. When it sees <code>import ... from "./timeseries.js"</code>,
+  it automatically fetches <code>timeseries.js</code> from the server.
+  It follows this chain recursively until all dependencies are loaded.
+  <strong>No bundler required</strong> — browsers do this natively.
+</p>
+
+<h2>Named vs Default Exports</h2>
+
+<pre><code><span class="cm">// Named exports — import by exact name:</span>
+<span class="kw">export function</span> <span class="nm">renderPSD</span>(div, data) { ... }
+<span class="kw">export function</span> <span class="nm">renderSpectrogram</span>(div, data) { ... }
+<span class="kw">export const</span> CHANNEL_COLORS = [<span class="st">"#5b8dee"</span>, <span class="st">"#4ade80"</span>, ...];
+
+<span class="cm">// In another file:</span>
+<span class="kw">import</span> { renderPSD, CHANNEL_COLORS } <span class="kw">from</span> <span class="st">"./spectral.js"</span>;
+
+
+<span class="cm">// Default export — import with any name you choose:</span>
+<span class="kw">export default function</span> <span class="nm">lttb</span>(times, values, n) { ... }
+
+<span class="cm">// In another file:</span>
+<span class="kw">import</span> lttb <span class="kw">from</span> <span class="st">"./downsample.js"</span>;       <span class="cm">// you choose the name</span>
+<span class="kw">import</span> myDownsample <span class="kw">from</span> <span class="st">"./downsample.js"</span>; <span class="cm">// also valid</span>
+</code></pre>
+
+<p>Montage Concord uses <strong>named exports</strong> throughout — each file exports its public functions by name, making it obvious what's available.</p>
+
+<h2>The Module Graph in Montage Concord</h2>
+
+<p>
+  The frontend's module graph is deliberately structured to avoid circular dependencies.
+  <code>app.js</code> is the only file that imports from all others; the render modules don't import from each other or from <code>app.js</code>.
+</p>
+
+<pre><code><span class="cm">// app.js imports from all render modules:</span>
+<span class="kw">import</span> { registerPanel, applyLayout, rerenderAll } <span class="kw">from</span> <span class="st">"./panels.js"</span>;
+<span class="kw">import</span> { renderTimeSeries, onZoomPan } <span class="kw">from</span> <span class="st">"./timeseries.js"</span>;
+<span class="kw">import</span> { renderPSD, renderSpectrogram } <span class="kw">from</span> <span class="st">"./spectral.js"</span>;
+<span class="kw">import</span> { renderLineLength, renderHjorth, renderBandPower } <span class="kw">from</span> <span class="st">"./metrics.js"</span>;
+<span class="kw">import</span> { renderBrain3DPanel } <span class="kw">from</span> <span class="st">"./brain.js"</span>;
+
+<span class="cm">// timeseries.js imports from nothing (pure):
+// spectral.js imports from nothing (pure):
+// metrics.js imports from nothing (pure):</span>
+</code></pre>
+
+<h2>Async/Await: Non-Blocking HTTP Calls</h2>
+
+<p>
+  The browser is single-threaded — if it waited for a network response, the whole page would freeze.
+  JavaScript solves this with <strong>async functions</strong> and <code>await</code>:
+</p>
+
+<pre><code><span class="cm">// Sync version (would freeze the browser):</span>
+<span class="kw">const</span> data = fetchData("/api/timeseries"); <span class="cm">// blocks until done — BAD</span>
+render(data);
+
+<span class="cm">// Async version (browser stays responsive):</span>
+<span class="kw">async function</span> <span class="nm">loadAndRender</span>() {
+  <span class="kw">const</span> data = <span class="kw">await</span> fetchData(<span class="st">"/api/timeseries"</span>); <span class="cm">// pauses THIS function, not the browser</span>
+  render(data);
+}
+</code></pre>
+
+<p>
+  <code>await</code> pauses execution of the current async function until the network request completes,
+  but lets the rest of the browser (other event handlers, animations, etc.) keep running.
+</p>
+
+<pre><code><span class="kw">async function</span> <span class="nm">apiFetch</span>(url, options = {}) {
+  <span class="kw">const</span> response = <span class="kw">await</span> fetch(url, options);   <span class="cm">// built-in browser HTTP function</span>
+  <span class="kw">if</span> (!response.ok) {
+    <span class="kw">const</span> text = <span class="kw">await</span> response.text();
+    <span class="kw">throw new</span> Error(text);
+  }
+  <span class="kw">return</span> response.json();   <span class="cm">// parse JSON body → JavaScript object</span>
+}
+</code></pre>
+
+<h2>How Plotly.react Works</h2>
+
+<p>
+  Plotly is a JavaScript charting library. Instead of creating a new chart every time data changes,
+  Montage Concord uses <code>Plotly.react()</code>, which <strong>updates</strong> an existing chart efficiently:
+</p>
+
+<pre><code><span class="cm">// First call: creates the chart</span>
+Plotly.react(divElement, traces, layout);
+
+<span class="cm">// Subsequent calls with new data: updates in place (much faster than newPlot)</span>
+Plotly.react(divElement, newTraces, layout);
+</code></pre>
+
+<p>
+  <code>Plotly.react</code> (introduced in Plotly 1.34) diffs the new traces against the existing ones
+  and only re-renders what changed. This is why the dashboard stays responsive when zooming/panning —
+  it doesn't rebuild the entire chart.
+</p>
+
+<h2>localStorage: Persisting Layout</h2>
+
+<p>
+  <code>localStorage</code> is a browser API for storing small amounts of data that persists
+  between page loads (unlike regular JavaScript variables which disappear on refresh).
+</p>
+
+<pre><code><span class="cm">// Save layout:</span>
+localStorage.setItem(<span class="st">"concord_layout"</span>, JSON.stringify(grid));
+
+<span class="cm">// Load layout:</span>
+<span class="kw">const</span> saved = localStorage.getItem(<span class="st">"concord_layout"</span>);
+<span class="kw">const</span> grid = saved ? JSON.parse(saved) : DEFAULT_GRID;
+</code></pre>
+
+<p>
+  This is how the panel layout (which panels are shown, in what arrangement) is remembered
+  between sessions. It's stored in the browser's local storage — not on the server —
+  so it's specific to this browser on this machine.
+</p>
+
+</article>
+</main>
+</body>
+</html>

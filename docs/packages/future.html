@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Future Packages — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Packages<span class="sep">›</span> Future</div>
+<h1>Future Packages</h1>
+<p class="subtitle">Planned packages for the full simulation and modeling pipeline</p>
+
+<div class="callout callout-warn">
+  <strong>Not yet implemented</strong>
+  These packages are designed but contain no code. The architecture is laid out
+  in CLAUDE.md files. They build on the core contracts (Recording, MetricResult, ParameterVector,
+  ModelOutput, Metric ABC, Model ABC) and the implemented model infrastructure
+  (<a href="models-utils.html">models-utils</a>, <a href="model-jansen-rit.html">Jansen-Rit</a>).
+</div>
+
+<h2>concord-connectome</h2>
+<p>
+  Structural connectivity — the physical wiring of the brain from diffusion MRI tractography.
+  This is needed by neural models that couple brain regions together.
+</p>
+<h3>Planned scope</h3>
+<ul>
+  <li>Load structural connectivity from FreeSurfer, MRtrix, or precomputed CSV/NumPy formats</li>
+  <li><strong>Contact-to-node mapping:</strong> given electrode MNI coordinates, find which atlas region each contact belongs to</li>
+  <li><strong>ConnectivityMatrix</strong> container: adjacency weights + fiber tract delays + region labels</li>
+  <li>Atlas support: Desikan-Killiany (68 regions), Destrieux (148 regions), Schaefer (configurable resolution)</li>
+</ul>
+
+<h2>Neural Model Packages</h2>
+
+<p>
+  Each model implements the <a href="core.html">Model ABC</a>
+  and self-registers via entry_points. They take a <code>ParameterVector</code> and optionally a
+  <code>ConnectivityMatrix</code>, and produce a <code>ModelOutput</code>.
+  The foundation model (<a href="model-jansen-rit.html">Jansen-Rit</a>) and shared utilities
+  (<a href="models-utils.html">models-utils</a>) are already implemented.
+  The remaining models extend the same infrastructure:
+</p>
+
+<h3>concord-model-wendling</h3>
+<p>
+  The Wendling (2002) 4-population cortical column model with fast inhibition.
+  Full documentation, equations, interactive simulation, and B–G regime map are on the
+  <a href="model-wendling.html">Model: Wendling</a> page.
+  Implementation is next on the roadmap.
+</p>
+
+<h3>concord-model-epileptor</h3>
+<p>
+  The Jirsa Epileptor (2014). A 5-variable phenomenological model designed specifically to
+  capture the bifurcation structure of seizure dynamics — onset, sustained ictal activity, and offset.
+</p>
+<ul>
+  <li>Fast population (variables x₁, y₁): ictal discharge dynamics</li>
+  <li>Spike-wave population (variables x₂, y₂): slow spike-wave activity</li>
+  <li>Slow permittivity variable (z): controls seizure onset and termination via saddle-node / homoclinic bifurcations</li>
+  <li>Network capable: couple N Epileptors via ConnectivityMatrix with conduction delays</li>
+  <li>Each node can have different epileptogenicity (x₀ parameter) for realistic spatial seizure spread</li>
+</ul>
+
+<h3>concord-model-robinson</h3>
+<p>
+  The Robinson thalamocortical model (2002). Models the cortex-thalamus-reticular nucleus loop,
+  capturing the full spectrum of sleep-wake dynamics and arousal states.
+</p>
+<ul>
+  <li>Best model for sleep spindles, K-complexes, and arousal transitions</li>
+  <li>State transitions: awake → NREM → REM sleep</li>
+  <li>Thalamic relay nucleus + reticular nucleus + cortical populations</li>
+</ul>
+
+<h2>Extended Metric Packages</h2>
+
+<h3>concord-metrics-connectivity</h3>
+<p>Measures statistical dependencies between pairs of channels — functional connectivity.</p>
+<ul>
+  <li><strong>Bivariate:</strong> Phase Locking Value (PLV), Phase Lag Index (PLI), weighted PLI, coherence, imaginary coherence</li>
+  <li><strong>Multivariate:</strong> Granger causality, Directed Transfer Function (DTF), Partial Directed Coherence (PDC)</li>
+  <li><strong>Information-theoretic:</strong> mutual information, transfer entropy</li>
+  <li><strong>Cross-frequency:</strong> phase-amplitude coupling (PAC), amplitude-amplitude coupling (AAC)</li>
+  <li>Output shape: (n_channels, n_channels) for pairwise metrics — square connectivity matrices</li>
+</ul>
+
+<h3>concord-metrics-event</h3>
+<p>Event detection and characterization.</p>
+<ul>
+  <li>Spike detection (amplitude threshold + morphology), spike rate per channel</li>
+  <li>DC shifts and infraslow activity detection</li>
+  <li>Seizure pattern classification (tonic, clonic, tonic-clonic, etc.)</li>
+  <li>Pre-ictal spectral acceleration (gamma power rise before onset)</li>
+  <li>Post-ictal suppression detection</li>
+  <li>Sleep spindles (12-14 Hz bursts), CCEPs (cortico-cortical evoked potentials)</li>
+</ul>
+
+<h3>concord-metrics-network</h3>
+<p>Graph-theoretic metrics applied to functional connectivity matrices.</p>
+<ul>
+  <li><strong>Node metrics:</strong> degree, betweenness centrality, clustering coefficient, eigenvector centrality</li>
+  <li><strong>Global metrics:</strong> small-world index, modularity, global/local efficiency</li>
+  <li><strong>Epileptogenicity Index (EI):</strong> Bartolomei's EI — quantifies the propensity of each brain region to generate seizures based on high-frequency power dynamics at seizure onset</li>
+  <li>Operates on connectivity MetricResult (no hard import of connectivity package — receives arrays)</li>
+</ul>
+
+<h3>concord-metrics-nonlinear</h3>
+<p>Measures of signal complexity and chaos.</p>
+<ul>
+  <li><strong>Entropy:</strong> sample entropy (SampEn), permutation entropy, approximate entropy (ApEn)</li>
+  <li><strong>Chaos:</strong> Lyapunov exponents, correlation dimension (D₂)</li>
+  <li><strong>Scaling:</strong> detrended fluctuation analysis (DFA), Hurst exponent</li>
+  <li>Statistical: kurtosis, skewness (deviations from Gaussianity)</li>
+</ul>
+
+<h2>concord-fit</h2>
+<p>
+  The optimization engine that fits model parameters to recorded data by minimizing
+  the distance between simulated and real metrics.
+</p>
+<h3>Planned scope</h3>
+<ul>
+  <li><strong>Optimization algorithms:</strong> differential evolution (global), CMA-ES (evolution strategy), Bayesian optimization</li>
+  <li><strong>Discovery:</strong> finds all installed metrics and models via entry_points — no hard imports</li>
+  <li><strong>Objective functions:</strong> distance between simulated MetricResult and measured MetricResult (e.g. PSD shape, band power, PLV)</li>
+  <li><strong>Parallelization:</strong> distributes model evaluations across CPU cores (multiprocessing, since metrics/models are pickle-safe)</li>
+  <li><strong>Checkpointing:</strong> saves optimization state so long runs can be resumed</li>
+  <li>Uses the existing <code>ParameterVector</code> container (already in concord-core) for parameter values + bounds</li>
+</ul>
+
+</article>
+</main>
+</body>
+</html>

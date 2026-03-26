@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Montage Concord — Demo</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+</head>
+<body>
+
+<!-- ============================================================ Top bar -->
+<div id="topbar">
+  <label for="path-input">EDF path:</label>
+  <input id="path-input" type="text" list="recent-paths"
+         placeholder="/path/to/recording.edf (or click Load to browse)"
+         spellcheck="false">
+  <datalist id="recent-paths"></datalist>
+  <button id="load-btn">Load</button>
+  <label for="notch-select" style="margin-left:8px">Filter:</label>
+  <select id="notch-select" disabled>
+    <option value="none">No Filter</option>
+    <option value="notch50">50 Hz Notch</option>
+    <option value="notch60">60 Hz Notch</option>
+
+  </select>
+  <button id="shutdown-btn" title="Stop the server">■ Stop</button>
+  <span id="status-msg"></span>
+  <div style="flex:1"></div>
+  <a id="docs-btn" href="docs/index.html" target="_blank" title="Documentation">? Docs</a>
+  <button id="layout-btn" title="Dashboard Setup">⚙ Layout</button>
+</div>
+
+<!-- ============================================================ Workspace: sidebar + main -->
+<div id="workspace">
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <div class="montage-bar">
+        <button class="montage-btn active" data-montage="monopolar">Mono</button>
+        <button class="montage-btn" data-montage="bipolar">Bi</button>
+        <button class="montage-btn" data-montage="car">CAR</button>
+      </div>
+      <div class="filter-bar">
+        <button class="filter-btn active" data-filter="all">All</button>
+        <button class="filter-btn" data-filter="soz">SOZ</button>
+        <button class="filter-btn" data-filter="good">Good</button>
+      </div>
+    </div>
+    <div id="channel-list">
+      <div class="ch-placeholder">Load a file to see channels.</div>
+    </div>
+    <select id="spect-channel-select" hidden>
+      <option disabled selected>—</option>
+    </select>
+  </div>
+
+  <button id="sidebar-toggle" title="Toggle sidebar">◀</button>
+
+  <!-- Main panel grid -->
+  <div id="main"></div>
+
+</div>
+
+<!-- ============================================================ File browser modal -->
+<div id="filebrowser-modal" class="modal-overlay" hidden>
+  <div class="modal">
+    <div class="modal-header">
+      <span id="fb-path" class="fb-path-label"></span>
+      <button id="fb-close" class="fb-close-btn">×</button>
+    </div>
+    <div id="fb-list" class="fb-list"></div>
+  </div>
+</div>
+
+<!-- ============================================================ Layout modal -->
+<div id="layout-modal" class="modal-overlay" hidden>
+  <div class="modal layout-modal-inner">
+    <div class="modal-header">
+      <span>Dashboard Setup</span>
+      <button id="layout-close" class="fb-close-btn">×</button>
+    </div>
+    <div class="layout-modal-body">
+      <div class="layout-presets">
+        <div class="layout-section-title">Presets</div>
+        <button class="preset-btn" data-preset="clinical">Clinical</button>
+        <button class="preset-btn" data-preset="seizure_onset">Seizure Onset</button>
+        <button class="preset-btn" data-preset="spectral">Spectral</button>
+      </div>
+      <div class="layout-custom">
+        <div class="layout-section-title">Custom Grid</div>
+        <div class="grid-size-row">
+          <label>Rows:
+            <select id="grid-rows">
+              <option>1</option><option selected>2</option><option>3</option>
+            </select>
+          </label>
+          <label>Cols:
+            <select id="grid-cols">
+              <option selected>1</option><option>2</option><option>3</option>
+            </select>
+          </label>
+          <button id="grid-size-apply">Resize</button>
+        </div>
+        <div id="grid-editor"></div>
+        <button id="layout-apply-btn">Apply Layout</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="synth.js"></script>
+<script src="dsp.js"></script>
+<script src="demo.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

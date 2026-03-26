@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>concord-metrics-spectral — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Packages<span class="sep">›</span> Metrics Spectral</div>
+<h1>concord-metrics-spectral</h1>
+<p class="subtitle">Frequency-domain metrics: Welch PSD and band power</p>
+
+<div class="callout callout-key">
+  <strong>Role in the system</strong>
+  Implements spectral analysis metrics. Both classes use <code>scipy.signal.welch</code> internally
+  and return <a href="core.html">MetricResult</a> containers with <code>freq_axis</code> populated.
+</div>
+
+<h2>Package Structure</h2>
+<pre><code>concord-metrics-spectral/
+  src/concord_metrics_spectral/
+    __init__.py     exports WelchPSD, BandPower
+    welch.py        WelchPSD metric
+    band_power.py   BandPower metric</code></pre>
+
+<h2>WelchPSD</h2>
+
+<p>
+  Computes the Power Spectral Density (PSD) of each channel using Welch's method.
+  Welch's method reduces variance by averaging the periodograms of overlapping segments.
+</p>
+
+<p>
+  <strong>What is PSD?</strong> PSD tells you how much power the signal contains at each frequency.
+  The x-axis is frequency (Hz), the y-axis is power density (V²/Hz).
+  A peak at 10 Hz means the signal has strong alpha-band activity.
+</p>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method cls">class</span><span class="api-path">WelchPSD(window_s=4.0, overlap=0.5, fmin=0.0, fmax=None, window="hann")</span></div>
+  <div class="api-body">
+    <table>
+      <thead><tr><th>Parameter</th><th>Default</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>window_s</td><td>4.0</td><td>Length of each FFT window in seconds. Longer = better frequency resolution.</td></tr>
+        <tr><td>overlap</td><td>0.5</td><td>Fractional overlap between FFT windows (0–1). 0.5 = 50% overlap.</td></tr>
+        <tr><td>fmin</td><td>0.0</td><td>Minimum frequency to return (Hz).</td></tr>
+        <tr><td>fmax</td><td>None</td><td>Maximum frequency to return (Hz). If None, returns up to Nyquist (fs/2).</td></tr>
+        <tr><td>window</td><td>"hann"</td><td>Window function name (passed to scipy). "hann" is the standard choice for spectral analysis.</td></tr>
+      </tbody>
+    </table>
+    <p><strong>name:</strong> <code>"welch_psd"</code></p>
+    <p><strong>units:</strong> <code>"V^2/Hz"</code></p>
+    <p><strong>Requires:</strong> <code>min_duration_s = window_s</code></p>
+  </div>
+</div>
+
+<h3>Output</h3>
+
+<table class="data-table">
+  <thead><tr><th>Field</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>data.shape</td><td>(n_channels, n_freqs)</td></tr>
+    <tr><td>freq_axis</td><td>Array of frequency values in Hz, length n_freqs</td></tr>
+    <tr><td>time_axis</td><td>None (PSD is a global estimate over the whole recording)</td></tr>
+  </tbody>
+</table>
+
+<h3>Frequency resolution</h3>
+<p>
+  Frequency resolution = <code>1 / window_s</code>. With the default 4-second window,
+  resolution is 0.25 Hz. This means frequencies are reported at 0, 0.25, 0.5, ... Hz.
+</p>
+
+<h3>How it works internally</h3>
+<pre><code><span class="kw">import</span> scipy.signal <span class="kw">as</span> ss
+
+<span class="cm"># For each channel:</span>
+freqs, psd = ss.welch(
+    data[ch],
+    fs=fs,
+    window=window,
+    nperseg=<span class="nb">int</span>(window_s * fs),
+    noverlap=<span class="nb">int</span>(window_s * fs * overlap),
+)
+<span class="cm"># Then mask to [fmin, fmax]</span></code></pre>
+
+<h2>BandPower</h2>
+
+<p>
+  Computes the total power in each of the standard EEG frequency bands for every channel.
+  Internally runs WelchPSD then integrates the PSD over each band using the trapezoidal rule.
+</p>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method cls">class</span><span class="api-path">BandPower(bands=None, window_s=4.0, overlap=0.5)</span></div>
+  <div class="api-body">
+    <table>
+      <thead><tr><th>Parameter</th><th>Default</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>bands</td><td>None</td><td>Dict mapping band name → (fmin, fmax). If None, uses standard EEG bands (see below).</td></tr>
+        <tr><td>window_s</td><td>4.0</td><td>Passed to WelchPSD.</td></tr>
+        <tr><td>overlap</td><td>0.5</td><td>Passed to WelchPSD.</td></tr>
+      </tbody>
+    </table>
+    <p><strong>name:</strong> <code>"band_power"</code></p>
+    <p><strong>units:</strong> <code>"V^2"</code></p>
+  </div>
+</div>
+
+<h3>Default frequency bands</h3>
+
+<table class="data-table">
+  <thead><tr><th>Band</th><th>Range</th><th>Clinical significance</th></tr></thead>
+  <tbody>
+    <tr><td>delta</td><td>0.5–4 Hz</td><td>Deep sleep, pathological slow waves, post-ictal suppression</td></tr>
+    <tr><td>theta</td><td>4–8 Hz</td><td>Drowsiness, hippocampal activity, memory encoding</td></tr>
+    <tr><td>alpha</td><td>8–13 Hz</td><td>Relaxed wakefulness, posterior dominant rhythm</td></tr>
+    <tr><td>beta</td><td>13–30 Hz</td><td>Active cognition, motor activity, anxiolytic drug effects</td></tr>
+    <tr><td>gamma</td><td>30–80 Hz</td><td>High-frequency oscillations, active processing, seizure fast ripples</td></tr>
+    <tr><td>high_gamma</td><td>80–150 Hz</td><td>High-frequency oscillations (HFOs), very-high-frequency seizure activity</td></tr>
+  </tbody>
+</table>
+
+<h3>Output</h3>
+
+<table class="data-table">
+  <thead><tr><th>Field</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>data.shape</td><td>(n_channels, n_bands)</td></tr>
+    <tr><td>freq_axis</td><td>None (bands summarize ranges)</td></tr>
+    <tr><td>metadata["bands"]</td><td>List of band names in axis-1 order, e.g. ["delta", "theta", "alpha", "beta", "gamma", "high_gamma"]</td></tr>
+  </tbody>
+</table>
+
+<h2>Example Usage</h2>
+
+<pre><code><span class="kw">from</span> concord_io <span class="kw">import</span> read_bids_ieeg
+<span class="kw">from</span> concord_metrics_spectral <span class="kw">import</span> WelchPSD, BandPower
+
+rec = read_bids_ieeg(<span class="st">"sub-HUP117_run-01_ieeg.edf"</span>)
+
+<span class="cm"># PSD</span>
+psd = WelchPSD(window_s=<span class="nb">4.0</span>, fmin=<span class="nb">1.0</span>, fmax=<span class="nb">150.0</span>).compute(rec)
+print(psd.data.shape)        <span class="cm"># (72, n_freqs)</span>
+print(psd.freq_axis[:5])     <span class="cm"># [1.0, 1.25, 1.5, 1.75, 2.0]  @ 4s window</span>
+
+<span class="cm"># Band power</span>
+bp = BandPower().compute(rec)
+print(bp.data.shape)         <span class="cm"># (72, 6)</span>
+print(bp.metadata["bands"])  <span class="cm"># ["delta", "theta", "alpha", "beta", "gamma", "high_gamma"]</span>
+gamma_power = bp.data[:, <span class="nb">4</span>] <span class="cm"># gamma band for all channels</span></code></pre>
+
+</article>
+</main>
+</body>
+</html>

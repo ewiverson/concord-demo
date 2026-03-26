@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>REST API &amp; HTTP — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Background<span class="sep">›</span> REST API &amp; HTTP</div>
+<h1>REST API &amp; HTTP</h1>
+<p class="subtitle">Background reading: how the browser and server communicate</p>
+
+<p>
+  This page explains the design pattern behind Montage Concord's web interface from first principles.
+  It is aimed at someone with no prior web development experience.
+</p>
+
+<h2>The Basic Idea: Client and Server</h2>
+
+<p>
+  When you run <code>python -m concord_server.server</code>, Python starts a <strong>server</strong>
+  — a program that sits and waits for requests. When you open a browser and go to
+  <code>http://localhost:8000</code>, your browser is the <strong>client</strong> — it sends requests
+  and displays the responses.
+</p>
+
+<p>
+  Think of it like a restaurant. The kitchen (server) has the data and can do computation.
+  The waiter system (HTTP) carries orders (requests) from the table (browser) to the kitchen,
+  and brings back dishes (responses).
+</p>
+
+<div class="callout callout-note">
+  <strong>Why run a server at all?</strong>
+  The Python code that reads EDF files, applies filters, and computes metrics cannot run directly
+  in the browser — browsers only run JavaScript. The server acts as a bridge: JavaScript in the
+  browser asks Python on the server to do the heavy work and return results.
+</div>
+
+<h2>HTTP: The Language of the Web</h2>
+
+<p>
+  HTTP (HyperText Transfer Protocol) is the standard format for messages between clients and servers.
+  Every HTTP interaction is a <strong>request</strong> from the client followed by a <strong>response</strong> from the server.
+</p>
+
+<h3>A request has three main parts:</h3>
+<ol>
+  <li><strong>Method</strong> — what kind of action: GET, POST, PUT, DELETE, etc.</li>
+  <li><strong>URL (path)</strong> — what resource: <code>/api/timeseries</code></li>
+  <li><strong>Body</strong> (optional) — extra data sent with the request, usually JSON</li>
+</ol>
+
+<h3>A response has two main parts:</h3>
+<ol>
+  <li><strong>Status code</strong> — a number indicating success or failure: 200 (OK), 400 (bad request), 404 (not found), 500 (server error)</li>
+  <li><strong>Body</strong> — the actual data returned, usually JSON</li>
+</ol>
+
+<h2>GET vs POST</h2>
+
+<p>GET and POST are the two HTTP methods used in Montage Concord. They have different purposes:</p>
+
+<table class="data-table">
+  <thead><tr><th>Method</th><th>Purpose</th><th>Has body?</th><th>Analogy</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>GET</td>
+      <td>Retrieve data. Should not change anything on the server.</td>
+      <td>No (params go in URL)</td>
+      <td>"Give me the current PSD"</td>
+    </tr>
+    <tr>
+      <td>POST</td>
+      <td>Send data to trigger an action or create/change state.</td>
+      <td>Yes (JSON body)</td>
+      <td>"Load this file" / "Switch to bipolar"</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>GET example — fetching time series</h3>
+<p>The browser asks for data with parameters in the URL:</p>
+<pre><code>GET /api/timeseries?t_start=0&amp;t_end=10&amp;channels=SEEG1,SEEG2
+</code></pre>
+<p>The <code>?</code> starts the <strong>query string</strong>. Parameters are <code>key=value</code> pairs separated by <code>&amp;</code>.</p>
+<p>The server responds with 200 OK and a JSON body like:</p>
+<pre><code>{
+  "channels": ["SEEG1", "SEEG2"],
+  "times": [0.0, 0.0005, ...],
+  "values": [[...], [...]],
+  "events": []
+}
+</code></pre>
+
+<h3>POST example — loading a file</h3>
+<p>The browser sends data in the request body:</p>
+<pre><code>POST /api/load
+Content-Type: application/json
+
+{"path": "/home/user/data/sub-HUP117_run-01_ieeg.edf"}
+</code></pre>
+<p>The server loads the file, updates its internal state, and responds with metadata about what was loaded.</p>
+
+<h2>JSON: The Data Format</h2>
+
+<p>
+  JSON (JavaScript Object Notation) is the standard format for sending structured data over HTTP.
+  It looks like Python dictionaries and lists:
+</p>
+
+<pre><code><span class="cm">// JSON uses double quotes (not single), true/false/null (not True/False/None)</span>
+{
+  "name": "SEEG1",
+  "status": "good",
+  "coordinates": [12.3, -4.1, 8.5],
+  "active": true,
+  "notes": null
+}
+</code></pre>
+
+<p>
+  Python's <code>json</code> module converts between Python dicts/lists and JSON strings.
+  FastAPI handles this conversion automatically — Python dicts returned from route functions
+  are automatically serialized to JSON.
+</p>
+
+<h2>The Full Request-Response Cycle</h2>
+
+<p>Here is what happens step by step when the browser fetches the time series:</p>
+
+<pre><code><span class="cm">// In the browser (JavaScript):</span>
+const response = await fetch("/api/timeseries?t_start=0&amp;t_end=10");
+const data = await response.json();
+<span class="cm">// data is now a JavaScript object: { channels: [...], times: [...], ... }</span>
+renderTimeSeries(div, data);
+</code></pre>
+
+<pre><code><span class="cm"># On the server (Python):</span>
+@app.get("/api/timeseries")
+def api_timeseries(t_start: float = None, t_end: float = None, ...):
+    recording = require_recording()           <span class="cm"># get current recording from state</span>
+    result = get_timeseries(recording, ...)  <span class="cm"># call viz function</span>
+    return result                             <span class="cm"># FastAPI converts dict → JSON</span>
+</code></pre>
+
+<h2>localhost and Ports</h2>
+
+<p>
+  <code>localhost</code> means "this same computer" — as opposed to a remote server on the internet.
+  The number after the colon (<code>:8000</code>) is the <strong>port</strong> — a way to distinguish
+  multiple servers on the same machine. Port 8000 is a common convention for development web servers.
+</p>
+
+<p>
+  When you type <code>http://localhost:8000</code>, the browser connects to the Python server
+  running on your own machine. This is why the server must be running before you open the browser.
+</p>
+
+<h2>Static vs Dynamic Content</h2>
+
+<p>
+  The server serves two kinds of content:
+</p>
+
+<table class="data-table">
+  <thead><tr><th>Type</th><th>What it is</th><th>How it works</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Static</td>
+      <td>HTML, CSS, JavaScript files</td>
+      <td>Sent as-is from the <code>static/</code> directory. These never change while the server is running.</td>
+    </tr>
+    <tr>
+      <td>Dynamic</td>
+      <td>API responses (<code>/api/*</code> routes)</td>
+      <td>Computed on demand from the current Recording state. Changes when the user loads a file or changes settings.</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  When you open <code>http://localhost:8000</code>, the browser receives <code>index.html</code> (static).
+  That HTML file contains <code>&lt;script&gt;</code> tags that load the JavaScript modules (also static).
+  The JavaScript then makes dynamic API calls to <code>/api/*</code> routes to fetch data.
+</p>
+
+<h2>How Montage Concord Uses This Pattern</h2>
+
+<p>Putting it all together:</p>
+
+<ol>
+  <li>You start the Python server. It loads no data yet — state is empty.</li>
+  <li>You open <code>http://localhost:8000</code>. Browser receives the HTML + JS files (static).</li>
+  <li>You type an EDF path and click Load. Browser sends <code>POST /api/load</code>.</li>
+  <li>Server calls <code>read_bids_ieeg()</code>, stores Recording in <code>AppState</code>. Returns channel metadata.</li>
+  <li>Browser receives channel list, builds sidebar. Then sends <code>GET /api/timeseries</code>.</li>
+  <li>Server calls <code>get_timeseries(recording, ...)</code>. Returns JSON with times + values.</li>
+  <li>Browser renders Plotly chart. You can now interact with the data.</li>
+  <li>You zoom in. Browser sends a new <code>GET /api/timeseries</code> with new <code>t_start</code>/<code>t_end</code>. Server responds with higher-resolution data for that window.</li>
+</ol>
+
+<p>
+  The key insight: the server holds all the data in memory; the browser only holds what's
+  needed for the current view. This is why the browser stays fast even with large EDF files.
+</p>
+
+</article>
+</main>
+</body>
+</html>

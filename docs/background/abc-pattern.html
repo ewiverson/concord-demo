@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Abstract Base Classes — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Background<span class="sep">›</span> Abstract Base Classes</div>
+<h1>Abstract Base Classes</h1>
+<p class="subtitle">Background reading: how Python ABCs define interfaces and enforce contracts</p>
+
+<h2>The Problem ABCs Solve</h2>
+
+<p>
+  Suppose you want to build a system where different teams can independently write different
+  metric implementations (line length, Hjorth, PSD, entropy, ...) and have them all work
+  interchangeably with the rest of the system.
+</p>
+
+<p>
+  The challenge: how do you guarantee that every metric implementation provides a
+  <code>compute()</code> function? Without any enforcement, someone might forget to add it,
+  or name it differently (<code>run()</code>, <code>calculate()</code>), and the system breaks at runtime
+  in hard-to-debug ways.
+</p>
+
+<p>
+  <strong>Abstract Base Classes</strong> solve this by defining an <em>interface contract</em>:
+  a set of methods that every subclass <em>must</em> implement. If a subclass is missing any
+  required method, Python refuses to instantiate it — you get a clear error immediately.
+</p>
+
+<h2>How ABCs Work in Python</h2>
+
+<p>
+  Python's <code>abc</code> module provides two key tools:
+  <code>ABC</code> (the base class to inherit from) and <code>@abstractmethod</code> (the decorator
+  that marks a method as required).
+</p>
+
+<pre><code><span class="kw">from</span> abc <span class="kw">import</span> ABC, abstractmethod
+
+<span class="kw">class</span> <span class="tp">Animal</span>(ABC):          <span class="cm"># ABC = Abstract Base Class</span>
+
+    @abstractmethod
+    <span class="kw">def</span> <span class="nm">speak</span>(self) -> str:
+        ...                  <span class="cm"># no implementation here — just the signature</span>
+
+    <span class="kw">def</span> <span class="nm">greet</span>(self):          <span class="cm"># regular method — concrete, inherited as-is</span>
+        print(<span class="st">f"I say: {self.speak()}"</span>)
+
+
+<span class="cm"># This works — Dog provides speak():</span>
+<span class="kw">class</span> <span class="tp">Dog</span>(Animal):
+    <span class="kw">def</span> <span class="nm">speak</span>(self) -> str:
+        <span class="kw">return</span> <span class="st">"Woof"</span>
+
+d = Dog()
+d.greet()   <span class="cm"># "I say: Woof"</span>
+
+
+<span class="cm"># This fails at instantiation — Cat doesn't implement speak():</span>
+<span class="kw">class</span> <span class="tp">Cat</span>(Animal):
+    <span class="kw">pass</span>
+
+c = Cat()   <span class="cm"># TypeError: Can't instantiate abstract class Cat with abstract method speak</span>
+</code></pre>
+
+<h2>The Metric ABC in Montage Concord</h2>
+
+<p>Here is the actual <code>Metric</code> ABC from <code>concord-core</code>:</p>
+
+<pre><code><span class="kw">from</span> abc <span class="kw">import</span> ABC, abstractmethod
+<span class="kw">from</span> .containers <span class="kw">import</span> Recording, MetricResult
+
+<span class="kw">class</span> <span class="tp">Metric</span>(ABC):
+
+    @property
+    @abstractmethod
+    <span class="kw">def</span> <span class="nm">name</span>(self) -> str: ...
+
+    @property
+    @abstractmethod
+    <span class="kw">def</span> <span class="nm">requires</span>(self) -> MetricRequirements: ...
+
+    @abstractmethod
+    <span class="kw">def</span> <span class="nm">compute</span>(self, recording: Recording) -> MetricResult: ...
+</code></pre>
+
+<p>
+  Any class that inherits from <code>Metric</code> but doesn't implement all three
+  (<code>name</code>, <code>requires</code>, <code>compute</code>) cannot be instantiated.
+  Python enforces this automatically.
+</p>
+
+<h2>@property + @abstractmethod</h2>
+
+<p>
+  <code>name</code> and <code>requires</code> use <em>both</em> <code>@property</code> and <code>@abstractmethod</code>.
+  The <code>@property</code> decorator means they are accessed as attributes, not called as methods:
+</p>
+
+<pre><code><span class="cm"># With @property:</span>
+metric = LineLength(window_s=<span class="nb">1.0</span>)
+print(metric.name)      <span class="cm"># "line_length"  — no parentheses!</span>
+
+<span class="cm"># Without @property, you'd call it as a method:</span>
+print(metric.name())    <span class="cm"># would fail with @property</span>
+</code></pre>
+
+<p>
+  This is a design choice: <code>name</code> and <code>requires</code> are conceptually constant properties
+  of a metric class, not computations. Using <code>@property</code> signals this intent.
+</p>
+
+<h2>The Implementation Pattern</h2>
+
+<p>Here is how a concrete metric class is structured, following the contract:</p>
+
+<pre><code><span class="kw">from</span> concord_core.abc <span class="kw">import</span> Metric, MetricRequirements
+<span class="kw">from</span> concord_core <span class="kw">import</span> Recording, MetricResult
+
+<span class="kw">class</span> <span class="tp">LineLength</span>(Metric):
+    <span class="kw">def</span> <span class="nm">__init__</span>(self, window_s=None, step_s=None):
+        self.window_s = window_s   <span class="cm"># config stored here</span>
+        self.step_s = step_s
+
+    @property
+    <span class="kw">def</span> <span class="nm">name</span>(self) -> str:
+        <span class="kw">return</span> <span class="st">"line_length"</span>
+
+    @property
+    <span class="kw">def</span> <span class="nm">requires</span>(self) -> MetricRequirements:
+        <span class="kw">return</span> MetricRequirements(
+            min_duration_s=self.window_s <span class="kw">or</span> <span class="nb">0.0</span>
+        )
+
+    <span class="kw">def</span> <span class="nm">compute</span>(self, recording: Recording) -> MetricResult:
+        <span class="cm"># ... actual computation ...</span>
+        <span class="kw">return</span> MetricResult(data=result, metric_name=self.name, ...)
+</code></pre>
+
+<h2>Why This Design?</h2>
+
+<h3>Interchangeability</h3>
+<p>
+  Because every metric has <code>compute(recording)</code>, you can write code that works with
+  <em>any</em> metric without knowing which one it is:
+</p>
+<pre><code><span class="kw">def</span> <span class="nm">run_all_metrics</span>(recording, metrics: list[Metric]):
+    results = []
+    <span class="kw">for</span> metric <span class="kw">in</span> metrics:
+        results.append(metric.compute(recording))
+    <span class="kw">return</span> results
+
+<span class="cm"># Works with any combination:</span>
+run_all_metrics(rec, [LineLength(), HjorthParameters(), WelchPSD()])
+</code></pre>
+
+<h3>Discoverability</h3>
+<p>
+  The <code>concord-fit</code> package (future) will discover all installed metrics via
+  entry_points and run them uniformly — without knowing their names in advance.
+  It just needs to know they all have <code>compute()</code>.
+</p>
+
+<h3>Validation via requires</h3>
+<p>
+  Before running a metric, code can check its requirements:
+</p>
+<pre><code><span class="kw">def</span> <span class="nm">safe_compute</span>(metric: Metric, recording: Recording):
+    req = metric.requires
+    <span class="kw">if</span> recording.duration < req.min_duration_s:
+        <span class="kw">raise</span> ValueError(<span class="st">f"Recording too short for {metric.name}"</span>)
+    <span class="kw">if</span> recording.n_channels < req.min_channels:
+        <span class="kw">raise</span> ValueError(<span class="st">f"Not enough channels for {metric.name}"</span>)
+    <span class="kw">return</span> metric.compute(recording)
+</code></pre>
+
+<h2>Stateless Design</h2>
+
+<p>
+  Notice that a <code>Metric</code> subclass only stores configuration in its <code>__init__</code>
+  (window size, filter parameters, etc.) — never intermediate computation results.
+  The result comes out of <code>compute()</code> and is returned as a new <code>MetricResult</code> object.
+</p>
+
+<p>
+  This makes metrics <strong>pickle-safe</strong>: you can send a Metric object to a worker process
+  via <code>multiprocessing</code>, have it call <code>compute()</code>, and get the MetricResult back.
+  If the metric stored its own state (half-computed arrays, etc.), pickling could fail or produce wrong results.
+</p>
+
+<h2>The Model ABC — Same Pattern, Different Domain</h2>
+
+<p>
+  Montage Concord uses the same ABC pattern for neural mass models.
+  The <code>Model</code> ABC in concord-core defines the simulation contract:
+</p>
+
+<pre><code><span class="kw">class</span> <span class="tp">Model</span>(ABC):
+
+    @property
+    @abstractmethod
+    <span class="kw">def</span> <span class="nm">name</span>(self) -> str: ...
+
+    @abstractmethod
+    <span class="kw">def</span> <span class="nm">default_parameters</span>(self) -> ParameterVector: ...
+
+    @abstractmethod
+    <span class="kw">def</span> <span class="nm">simulate</span>(self, parameters, duration_s, fs, seed=<span class="nb">None</span>) -> ModelOutput: ...
+</code></pre>
+
+<p>
+  Just like <code>Metric</code> guarantees every metric has <code>compute()</code>,
+  <code>Model</code> guarantees every model has <code>simulate()</code>.
+  The optimization engine (<code>concord-fit</code>) can discover and run any installed model
+  without knowing its internals — it only needs to know the ABC contract.
+  See <a href="neural-mass-models.html">Neural Mass Models</a> for more about what these models simulate.
+</p>
+
+</article>
+</main>
+</body>
+</html>

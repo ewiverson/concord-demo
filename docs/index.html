@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Montage Concord — Documentation</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav><script src="nav.js"></script></nav>
+
+<main>
+<article>
+
+<h1>Montage Concord</h1>
+<p class="subtitle">A modular SEEG simulation and analysis framework — documentation home</p>
+
+<p>
+  <strong>Montage Concord</strong> is a Python framework for working with stereotactic EEG (SEEG) data.
+  It is organized as a collection of independent sub-packages that together form a complete pipeline:
+  reading data from disk → re-referencing → computing metrics → visualizing results → fitting neural models.
+</p>
+
+<div class="callout callout-note">
+  <strong>Current Status</strong>
+  The visualization pipeline is complete (EDF reading, re-referencing, metric computation,
+  interactive dashboard) and the modeling pipeline has begun: the Model ABC, shared numerical
+  utilities, and the first neural mass model (Jansen-Rit) are implemented.
+  Model fitting and additional models are next.
+</div>
+
+<h2>Where to Start</h2>
+
+<p>If you are new, read in this order:</p>
+
+<div class="card-grid">
+  <a class="card" href="architecture.html">
+    <div class="card-tag">Overview</div>
+    <div class="card-title">Architecture</div>
+    <div class="card-desc">How all packages fit together, dependency graph, design rules.</div>
+  </a>
+  <a class="card" href="data-flow.html">
+    <div class="card-tag">Overview</div>
+    <div class="card-title">Data Flow</div>
+    <div class="card-desc">Trace a single EDF file from disk to interactive visualization.</div>
+  </a>
+  <a class="card" href="packages/core.html">
+    <div class="card-tag">Package</div>
+    <div class="card-title">Core</div>
+    <div class="card-desc">Recording, MetricResult, ParameterVector, ModelOutput containers. Metric and Model ABCs.</div>
+  </a>
+  <a class="card" href="packages/server.html">
+    <div class="card-tag">Package</div>
+    <div class="card-title">Server</div>
+    <div class="card-desc">FastAPI backend + interactive browser dashboard.</div>
+  </a>
+</div>
+
+<h2>All Packages</h2>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Package</th><th>Purpose</th><th>Status</th></tr>
+  </thead>
+  <tbody>
+    <tr><td><a href="packages/core.html">concord-core</a></td><td>Containers (Recording, MetricResult, ParameterVector, ModelOutput), Metric &amp; Model ABCs</td><td><span class="badge badge-impl">Implemented</span></td></tr>
+    <tr><td><a href="packages/io.html">concord-io</a></td><td>EDF/BIDS reader, re-referencing, epoch slicing</td><td><span class="badge badge-impl">Implemented</span></td></tr>
+    <tr><td><a href="packages/metrics-utils.html">concord-metrics-utils</a></td><td>Windowing, filtering, analytic signal primitives</td><td><span class="badge badge-impl">Implemented</span></td></tr>
+    <tr><td><a href="packages/metrics-univariate.html">concord-metrics-univariate</a></td><td>Line length, Hjorth parameters</td><td><span class="badge badge-impl">Implemented</span></td></tr>
+    <tr><td><a href="packages/metrics-spectral.html">concord-metrics-spectral</a></td><td>Welch PSD, band power</td><td><span class="badge badge-impl">Implemented</span></td></tr>
+    <tr><td><a href="packages/viz.html">concord-viz</a></td><td>Timeseries, spectrogram, PSD, metric preparation for frontend</td><td><span class="badge badge-impl">Implemented</span></td></tr>
+    <tr><td><a href="packages/server.html">concord-server</a></td><td>FastAPI server + browser-based dashboard</td><td><span class="badge badge-impl">Implemented</span></td></tr>
+    <tr><td><a href="packages/frontend.html">Frontend (JS)</a></td><td>ES module JS: panels, Plotly rendering, 3D brain</td><td><span class="badge badge-impl">Implemented</span></td></tr>
+    <tr><td><a href="packages/demo.html">concord-demo</a></td><td>Standalone static demo with pre-baked SEEG data (GitHub Pages)</td><td><span class="badge badge-impl">Implemented</span></td></tr>
+    <tr><td><a href="packages/future.html">concord-fit</a></td><td>Optimization engine for model fitting</td><td><span class="badge badge-planned">Planned</span></td></tr>
+    <tr><td><a href="packages/future.html">concord-connectome</a></td><td>Structural connectivity, parcellation, contact mapping</td><td><span class="badge badge-planned">Planned</span></td></tr>
+    <tr><td><a href="packages/models-utils.html">concord-models-utils</a></td><td>ODE integrators, noise, sigmoid functions</td><td><span class="badge badge-impl">Implemented</span></td></tr>
+    <tr><td><a href="packages/model-jansen-rit.html">concord-model-jansen-rit</a></td><td>Jansen-Rit cortical column model (alpha rhythm)</td><td><span class="badge badge-impl">Implemented</span></td></tr>
+    <tr><td><a href="packages/future.html">concord-model-*</a></td><td>Wendling, Epileptor, Robinson models</td><td><span class="badge badge-planned">Planned</span></td></tr>
+    <tr><td><a href="packages/future.html">concord-metrics-connectivity</a></td><td>PLV, coherence, Granger causality, PAC…</td><td><span class="badge badge-planned">Planned</span></td></tr>
+    <tr><td><a href="packages/future.html">concord-metrics-event</a></td><td>Spike detection, seizure pattern classification</td><td><span class="badge badge-planned">Planned</span></td></tr>
+    <tr><td><a href="packages/future.html">concord-metrics-network</a></td><td>Graph metrics, epileptogenicity index</td><td><span class="badge badge-planned">Planned</span></td></tr>
+    <tr><td><a href="packages/future.html">concord-metrics-nonlinear</a></td><td>Sample entropy, Lyapunov exponents, DFA</td><td><span class="badge badge-planned">Planned</span></td></tr>
+  </tbody>
+</table>
+
+<h2>Background Reading</h2>
+
+<p>Not familiar with some of the design patterns used? These pages explain them from first principles:</p>
+
+<div class="card-grid">
+  <a class="card" href="background/rest-api.html">
+    <div class="card-tag">Background</div>
+    <div class="card-title">REST API &amp; HTTP</div>
+    <div class="card-desc">What GET and POST mean, how JSON travels over HTTP, how the browser talks to the server.</div>
+  </a>
+  <a class="card" href="background/fastapi.html">
+    <div class="card-tag">Background</div>
+    <div class="card-title">FastAPI</div>
+    <div class="card-desc">How Python FastAPI turns function definitions into HTTP endpoints.</div>
+  </a>
+  <a class="card" href="background/abc-pattern.html">
+    <div class="card-tag">Background</div>
+    <div class="card-title">Abstract Base Classes</div>
+    <div class="card-desc">How Python ABCs define contracts that implementations must satisfy.</div>
+  </a>
+  <a class="card" href="background/entry-points.html">
+    <div class="card-tag">Background</div>
+    <div class="card-title">Python Entry Points</div>
+    <div class="card-desc">How packages register themselves for discovery without hard imports.</div>
+  </a>
+  <a class="card" href="background/es-modules.html">
+    <div class="card-tag">Background</div>
+    <div class="card-title">JS ES Modules</div>
+    <div class="card-desc">How modern JavaScript splits code into import/export modules.</div>
+  </a>
+  <a class="card" href="background/neural-mass-models.html">
+    <div class="card-tag">Background</div>
+    <div class="card-title">Neural Mass Models</div>
+    <div class="card-desc">What neural mass models are, how the Jansen-Rit model works, and why we use them.</div>
+  </a>
+</div>
+
+<h2>Quick-Start: Running the Server</h2>
+
+<pre><code><span class="cm"># Activate the environment</span>
+conda activate concord
+
+<span class="cm"># Start the server</span>
+conda run -n concord python -m concord_server.server
+<span class="cm"># Then open http://localhost:8000 in a browser</span>
+
+<span class="cm"># Or use the convenience script at the project root</span>
+python serve.py</code></pre>
+
+<p>
+  Once loaded, use the file browser to open an EDF file, switch montage modes,
+  apply notch filtering, and explore the multi-panel visualization dashboard.
+</p>
+
+</article>
+</main>
+
+</body>
+</html>

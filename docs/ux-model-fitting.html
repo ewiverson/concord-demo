@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Model Fitting Workflow — Montage Concord</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav><script src="nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="index.html">Home</a><span class="sep">›</span> Model Fitting Workflow</div>
+<h1>Model Fitting Workflow</h1>
+<p class="subtitle">Design specification for the IC-CAP-inspired fitting UI and the model file format</p>
+
+<div class="callout callout-note">
+  <strong>Status: Design Document</strong>
+  This page specifies the planned UX overhaul and model file format. Nothing described here is implemented yet.
+  Implementation order: (1) model file format + save/load, (2) server routes, (3) tuner UI,
+  (4) optimizer UI, (5) LLM bridge.
+</div>
+
+<h2>Motivation: The IC-CAP Analogy</h2>
+
+<p>
+  Keysight IC-CAP is a device modeling platform widely used in semiconductor characterization.
+  Its key insight is that the <em>model developer</em>, not the tool developer, defines the UI.
+  A device engineer ships an MDL (Model Definition Language) file that contains in one place:
+  the circuit equations, parameter bounds, measurement setups, data-processing transforms, and
+  which plots to show during fitting. The platform provides infrastructure (instrument control,
+  optimization, visualization); the MDL file drives what that infrastructure does.
+</p>
+
+<p>
+  Concord adopts the same philosophy for neural mass models. The platform provides:
+  data loading, simulation runner, tuner, optimizer, and LLM bridge.
+  The <strong>model file</strong> drives: which tabs to show, which parameters are tunable,
+  what the fitting targets are, and how to measure fit quality. A user can start from a
+  template, fit their data without touching any code, or extend the model equations and
+  have those extensions immediately available in the fitting UI.
+</p>
+
+<h2>The Model File (<code>.concord.py</code>)</h2>
+
+<p>
+  A <strong>model file</strong> is a plain Python module with a conventional structure.
+  It is self-contained: everything needed to simulate, tune, and fit lives in one file.
+</p>
+
+<pre><code>wendling_hup117.concord.py
+├── class MyWendling(Model):     # the equations — user-editable
+│     default_parameters()       # ParameterVector with names, values, bounds, units
+│     simulate()                 # returns ModelOutput
+│
+├── LAYOUT = { ... }             # tab layout manifest — which plots, which params
+├── TRANSFORMS = { ... }         # named fitting targets (Python callables)
+└── FIT_CONFIG = { ... }         # algorithm, goal weights, optimizer kwargs</code></pre>
+
+<p>
+  Being plain Python means:
+</p>
+<ul>
+  <li>Diffs are readable and version-controllable with git</li>
+  <li>An LLM can read it in full and produce coherent edits</li>
+  <li>The model class is the same <code>Model</code> ABC used by all <code>concord-model-*</code>
+      packages — no new interface required</li>
+  <li>Transforms are just functions; users write standard numpy/scipy code</li>
+</ul>
+
+<h3>Templates vs. Project Files</h3>
+
+<p>
+  Each <code>concord-model-*</code> package ships a <code>templates/</code> directory with
+  one or more <code>.concord.py</code> template files. Templates are read-only and are never
+  overwritten by the tool. When a user starts a new project, the server copies the chosen
+  template into their project directory — the user works on that copy.
+</p>
+
+<div class="callout callout-tip">
+  <strong>Rule: Never Overwrite a Template</strong>
+  User saves always write to the project copy (<code>~/concord-projects/&lt;project&gt;/</code>).
+  Template files remain unchanged, always available as a known-good starting point.
+</div>
+
+<h2>Template Workflow</h2>
+
+<pre><code>User opens concord-server → "Model Fitting" tab
+  → "New project" dialog
+      → picks a template (lists all installed concord-model-* templates)
+      → enters a project name
+  → Server copies template → ~/concord-projects/&lt;project&gt;/wendling.concord.py
+  → Session binds to that project file
+  → User loads BIDS recording
+  → Tunes, fits, saves
+  → Project file updated in-place (never the template)</code></pre>
+
+<p>
+  A save captures three things together: any edits to the model class, the current best-fit
+  <code>ParameterVector</code>, and any changes to <code>TRANSFORMS</code> or <code>FIT_CONFIG</code>.
+  The file is always a complete, runnable Python module — not a patch on top of the template.
+</p>
+
+<h2>Layout Manifest (<code>LAYOUT</code>)</h2>
+
+<p>
+  <code>LAYOUT</code> is a dict that tells the platform how to build the fitting UI for this model:
+  which tabs to show, what to render on each tab, and which parameters are exposed in the tuner.
+</p>
+
+<pre><code>LAYOUT = {
+    "tabs": [
+        {
+            "id": "data_conditioning",
+            "label": "Data Conditioning",
+            "plots": ["timeseries", "psd", "spectrogram"],
+            "controls": ["montage", "notch", "epoch_select"],
+        },
+        {
+            "id": "baseline_fitting",
+            "label": "Baseline Fitting",
+            "plots": ["psd_overlay", "timeseries_overlay"],
+            "tunable": ["A", "B", "G", "p", "sigma"],   # subset of model params
+            "targets": ["baseline_psd_shape"],            # keys in TRANSFORMS
+        },
+        {
+            "id": "ictal_fitting",
+            "label": "Ictal Fitting",
+            "plots": ["timeseries_overlay", "spectrogram_overlay", "regime_portrait"],
+            "tunable": ["A", "B", "G", "a", "b", "g"],
+            "targets": ["seizure_band_power", "onset_latency"],
+        },
+        {
+            "id": "validation",
+            "label": "Validation",
+            "plots": ["metric_heatmap", "psd_overlay", "timeseries_overlay"],
+        },
+    ],
+    "tuner": {
+        "params": {
+            "A":     {"step": 0.1,  "display": "EPSP amplitude"},
+            "B":     {"step": 0.5,  "display": "Slow IPSP amplitude"},
+            "G":     {"step": 0.5,  "display": "Fast IPSP amplitude"},
+            "a":     {"step": 5.0,  "display": "EPSP time constant"},
+            "b":     {"step": 5.0,  "display": "Slow IPSP time constant"},
+            "g":     {"step": 20.0, "display": "Fast IPSP time constant"},
+            "C":     {"step": 5.0,  "display": "Connectivity scaling"},
+            "p":     {"step": 5.0,  "display": "Mean input (Hz)"},
+            "sigma": {"step": 2.0,  "display": "Input noise std (Hz)"},
+        }
+    }
+}</code></pre>
+
+<h3>Platform Plot Palette</h3>
+
+<p>
+  Any tab can request any of these plot types. The platform renders them with real and simulated
+  data overlaid once a simulation has been run.
+</p>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Plot type</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>timeseries</td><td>Raw waveform for selected channels</td></tr>
+    <tr><td>timeseries_overlay</td><td>Real vs. simulated waveforms overlaid</td></tr>
+    <tr><td>psd</td><td>Welch power spectral density</td></tr>
+    <tr><td>psd_overlay</td><td>Real vs. simulated PSD overlaid</td></tr>
+    <tr><td>spectrogram</td><td>Short-time Fourier transform (single channel)</td></tr>
+    <tr><td>spectrogram_overlay</td><td>Side-by-side real vs. simulated spectrograms</td></tr>
+    <tr><td>phase_portrait</td><td>State variable phase plot (model introspection)</td></tr>
+    <tr><td>regime_portrait</td><td>Parameter-space regime map (Wendling-specific)</td></tr>
+    <tr><td>metric_heatmap</td><td>Any MetricResult rendered as channels × time heatmap</td></tr>
+    <tr><td>brain_3d</td><td>3D electrode view with per-channel scalar coloring</td></tr>
+  </tbody>
+</table>
+
+<h2>Transforms (<code>TRANSFORMS</code>)</h2>
+
+<p>
+  Transforms are the user-extensible fitting targets — the Concord equivalent of IC-CAP's
+  PEL/Python extraction transforms. Each is a Python callable that maps a
+  <code>Recording</code> or <code>ModelOutput</code> to a scalar or 1-D array.
+  The optimizer minimizes the distance between <code>transform(real_data)</code>
+  and <code>transform(simulated_output)</code>.
+</p>
+
+<pre><code>import numpy as np
+from concord_metrics_spectral import WelchPSD
+from concord_metrics_univariate import BandPower
+
+
+def baseline_psd_shape(data, params=None):
+    """Log PSD 1–40 Hz — match shape, not absolute power."""
+    result = WelchPSD().compute(data, params)
+    freqs = result.metadata["freqs"]
+    mask = (freqs >= 1) & (freqs <= 40)
+    return np.log10(result.data[:, mask].mean(axis=0))  # (n_freqs,)
+
+
+def seizure_band_power(data, params=None):
+    """Gamma / delta band power ratio during the ictal epoch."""
+    gamma = BandPower(fmin=30, fmax=80).compute(data, params).data.mean()
+    delta = BandPower(fmin=1,  fmax=4 ).compute(data, params).data.mean()
+    return gamma / (delta + 1e-9)                        # scalar
+
+
+def onset_latency(data, params=None):
+    """Time of maximum gamma power increase, relative to epoch start."""
+    ...                                                  # scalar (seconds)
+
+
+TRANSFORMS = {
+    "baseline_psd_shape": baseline_psd_shape,
+    "seizure_band_power":  seizure_band_power,
+    "onset_latency":       onset_latency,
+}</code></pre>
+
+<div class="callout callout-key">
+  <strong>Key Design Insight</strong>
+  Transforms decouple "what I'm trying to match" from the optimizer. The optimizer does not
+  need to know anything about PSD shapes or seizure dynamics — it just minimizes distances
+  between transform outputs. Model developers write transforms; the platform runs them.
+</div>
+
+<p>
+  This mirrors IC-CAP's separation of measurement data (MDM files) from extraction algorithms
+  (PEL/Python transforms): the measurement and the extraction recipe are independent, so you
+  can change one without touching the other.
+</p>
+
+<h2>Fit Config (<code>FIT_CONFIG</code>)</h2>
+
+<p>
+  <code>FIT_CONFIG</code> describes the default optimization setup: which parameters to fit,
+  which transforms to use as goals, how to weight them, and which algorithm to use.
+  All of these can be overridden from the optimizer UI without editing the file.
+</p>
+
+<pre><code>FIT_CONFIG = {
+    "algorithm": "differential_evolution",   # nelder_mead | cmaes | bayesian
+    "params_to_fit": ["A", "B", "G", "p", "sigma"],
+    "goals": {
+        "baseline_psd_shape": {
+            "weight": 1.0,
+            "metric": "mse",      # mse | correlation | dtw | custom callable
+        },
+        "seizure_band_power": {
+            "weight": 2.0,
+            "metric": "mse",
+        },
+        "onset_latency": {
+            "weight": 0.5,
+            "metric": "mse",
+        },
+    },
+    "optimizer_kwargs": {
+        "maxiter": 500,
+        "tol":     1e-4,
+        "workers": 4,
+    },
+}</code></pre>
+
+<p>
+  <code>concord-fit</code> is the backend engine that consumes <code>TRANSFORMS</code> and
+  <code>FIT_CONFIG</code>. It is exposed to the UI through server routes (see below) and
+  never hard-imports specific model or metric packages — it discovers them through the entry
+  points registry.
+</p>
+
+<h2>Tuner UI</h2>
+
+<p>
+  The tuner is a persistent panel (collapsible sidebar) visible on any fitting tab.
+  It provides immediate interactive feedback without needing to run the full optimizer.
+</p>
+
+<ul>
+  <li>One slider per parameter listed in <code>LAYOUT["tuner"]["params"]</code>, labeled with
+      <code>display</code> name and unit from <code>ParameterVector</code></li>
+  <li><strong>Lock checkbox</strong> per parameter — locked params are excluded from the
+      current optimizer run but still show their value</li>
+  <li><strong>Live re-simulation</strong> triggered on slider <em>release</em> (not continuous
+      drag) — simulates the model and re-renders all plots on the current tab with real vs.
+      simulated overlaid</li>
+  <li><strong>"Snap to best"</strong> button — resets all sliders to the current best-fit
+      <code>ParameterVector</code> from the most recent optimizer run</li>
+  <li>Numeric input field beside each slider for precise value entry</li>
+  <li>Bounds shown as range markers on the slider track</li>
+</ul>
+
+<h2>Optimizer UI</h2>
+
+<p>
+  The optimizer panel drives <code>concord-fit</code> from the browser.
+</p>
+
+<ul>
+  <li><strong>Algorithm dropdown</strong> — overrides <code>FIT_CONFIG["algorithm"]</code>
+      for this run</li>
+  <li><strong>Goal weight sliders</strong> — one per entry in <code>FIT_CONFIG["goals"]</code>,
+      live-editable without restarting a run</li>
+  <li><strong>Freeze param checkboxes</strong> — subset of <code>params_to_fit</code> to include
+      in this run (all checked by default)</li>
+  <li><strong>Start / Stop / Pause</strong> controls — pause freezes parameter updates but
+      keeps the best result so far; resume continues from that point</li>
+  <li><strong>Convergence plot</strong> — objective value vs. iteration, live-updating</li>
+  <li><strong>Parameter trajectory</strong> — each fitted param's value over iterations,
+      useful for spotting parameters that are stuck at a bound</li>
+  <li>On completion: best parameters shown; user clicks <strong>"Accept"</strong> to push
+      them to the tuner sliders (does not save the file automatically)</li>
+</ul>
+
+<h2>LLM Integration</h2>
+
+<p>
+  IC-CAP requires the model developer to write PEL or Python extraction code by hand.
+  Concord can lower this barrier: the model file is just Python, so an LLM can read it and
+  produce coherent edits.
+</p>
+
+<h3>What the LLM Can Do</h3>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Capability</th><th>Example</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Model editing</td>
+      <td>"Add a parameter for 1/f noise — update the equations, ParameterVector,
+          LAYOUT, TRANSFORMS, and FIT_CONFIG"</td>
+    </tr>
+    <tr>
+      <td>Transform generation</td>
+      <td>"Write a transform that measures the slope of the log PSD in the 1–10 Hz range"</td>
+    </tr>
+    <tr>
+      <td>Fitting guidance</td>
+      <td>After a run: "Parameter B is at its lower bound and loss isn't converging —
+          suggest widening bounds or changing the goal weighting"</td>
+    </tr>
+    <tr>
+      <td>Regime annotation</td>
+      <td>"Looking at the loaded data, which Wendling regime does it resemble?
+          What starting parameter values would you suggest?"</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>Interaction Pattern</h3>
+
+<ul>
+  <li><strong>Chat panel</strong> — collapsible sidebar, always available</li>
+  <li><strong>Automatic context</strong> — the LLM receives the full current model file text,
+      current parameter values, and (if a fit has run) the convergence history and residuals</li>
+  <li><strong>Proposed edits as inline diff</strong> — when the LLM suggests code changes,
+      they appear as a unified diff in a code review panel; user clicks
+      <em>Accept</em> or <em>Dismiss</em></li>
+  <li><strong>No auto-execution</strong> — LLM output is never applied automatically;
+      the same Accept/Dismiss flow applies regardless of how the edit was generated</li>
+</ul>
+
+<div class="callout callout-warn">
+  <strong>Security Boundary</strong>
+  LLM-generated code runs in the same Python process as the server. Users must explicitly
+  click "Accept" before any code edit is written to disk. The server never executes a new
+  model class until the file has been saved and explicitly reloaded by the user.
+</div>
+
+<h2>Server-Side Architecture</h2>
+
+<p>
+  The fitting workflow requires new routes in <code>concord-server</code> and new server state.
+  The heavy computation (simulation, optimization) stays in <code>concord-fit</code>;
+  the server is a thin coordination layer.
+</p>
+
+<h3>New Routes</h3>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Route</th><th>Purpose</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>GET /api/model/list</td><td>List available templates from installed concord-model-* packages</td></tr>
+    <tr><td>POST /api/model/load</td><td>Load a .concord.py file; return LAYOUT, param names/bounds, FIT_CONFIG</td></tr>
+    <tr><td>POST /api/model/simulate</td><td>Run model.simulate() with given ParameterVector; return timeseries JSON</td></tr>
+    <tr><td>POST /api/model/save</td><td>Write the project .concord.py file (never a template path)</td></tr>
+    <tr><td>POST /api/fit/start</td><td>Launch a background fitting job</td></tr>
+    <tr><td>GET /api/fit/status</td><td>Poll fit progress: iteration count, current objective, current params</td></tr>
+    <tr><td>POST /api/fit/stop</td><td>Cancel the running fit; return best params found so far</td></tr>
+    <tr><td>POST /api/llm/chat</td><td>Send prompt + context to Claude API; stream response back</td></tr>
+    <tr><td>POST /api/llm/apply</td><td>Write an LLM-proposed model file edit after user accepts</td></tr>
+  </tbody>
+</table>
+
+<h3>New Server State Fields</h3>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Field</th><th>Type</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>model_file_path</td><td>Path | None</td><td>Path to the loaded .concord.py project file</td></tr>
+    <tr><td>model_instance</td><td>Model | None</td><td>Instantiated model class from the loaded file</td></tr>
+    <tr><td>layout</td><td>dict | None</td><td>Parsed LAYOUT from the loaded file</td></tr>
+    <tr><td>fitted_params</td><td>ParameterVector | None</td><td>Best-fit params from the most recent optimizer run</td></tr>
+    <tr><td>fit_job</td><td>Task | None</td><td>Handle to the background asyncio/thread fitting task</td></tr>
+  </tbody>
+</table>
+
+<h2>Out of Scope</h2>
+
+<p>The following are explicitly deferred and should not influence the initial implementation:</p>
+
+<ul>
+  <li><strong>concord-connectome integration</strong> — connectivity optimizer tab requires
+      parcellation and contact-to-region mapping, which belongs in a separate package</li>
+  <li><strong>Stimulation simulation tab</strong> — driving a fitted model with a stimulus
+      waveform is a later phase</li>
+  <li><strong>Multi-node network models</strong> — the current Model ABC supports multi-node
+      output but network connectivity is not yet wired to the fitting workflow</li>
+  <li><strong>Statistical/population fitting</strong> — fitting across multiple subjects or
+      sessions is a future concern</li>
+</ul>
+
+</article>
+</main>
+
+</body>
+</html>

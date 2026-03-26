@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>concord-model-wendling — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  .viz-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin: 1rem 0 1.5rem;
+  }
+  .viz-container .js-plotly-plot { margin-bottom: 0.75rem; }
+  .slider-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0.4rem 0;
+    font-size: 0.85rem;
+  }
+  .slider-row label {
+    min-width: 120px;
+    font-family: "JetBrains Mono", monospace;
+    color: var(--teal);
+    font-size: 0.82rem;
+  }
+  .slider-row input[type="range"] {
+    flex: 1;
+    accent-color: var(--accent);
+    height: 4px;
+  }
+  .slider-row .slider-val {
+    min-width: 55px;
+    text-align: right;
+    font-family: "JetBrains Mono", monospace;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+  }
+  .viz-caption {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    margin-top: 0.4rem;
+    font-style: italic;
+  }
+  .regime-label {
+    display: inline-block;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    margin-left: 0.5rem;
+  }
+  .regime-bg      { background: rgba(91,141,238,0.15); color: var(--accent); }
+  .regime-spikes  { background: rgba(248,113,113,0.15); color: var(--red); }
+  .regime-spike-wave { background: rgba(251,146,60,0.15); color: var(--orange); }
+  .regime-rhythmic { background: rgba(77,222,128,0.15); color: var(--green); }
+  .regime-lvfa    { background: rgba(167,139,250,0.15); color: var(--purple); }
+  .regime-sine    { background: rgba(45,212,191,0.15); color: var(--teal); }
+  .preset-row {
+    display: flex;
+    gap: 0.4rem;
+    margin: 0.6rem 0 0.2rem;
+    flex-wrap: wrap;
+  }
+  .preset-btn {
+    font-size: 0.72rem;
+    font-family: "JetBrains Mono", monospace;
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .preset-btn:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+</style>
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Packages<span class="sep">›</span> Model: Wendling</div>
+<h1>concord-model-wendling</h1>
+<p class="subtitle">4-population cortical column model with fast inhibition (Wendling et al., 2002)</p>
+
+<div class="callout callout-key">
+  <strong>Role in the system</strong>
+  The primary model for seizure dynamics in Montage Concord. Extends the
+  <a href="model-jansen-rit.html">Jansen-Rit model</a> with a fourth neural population
+  (fast GABA-A inhibitory interneurons), enabling simulation of the full spectrum of EEG
+  activity from normal background through to ictal seizure patterns. Takes a ParameterVector,
+  integrates 10 ODEs using RK4, and produces a ModelOutput. Registered via entry_points as
+  <code>concord.models:wendling</code>.
+</div>
+
+<p>
+  For a conceptual introduction to neural mass models, post-synaptic potentials, and the
+  sigmoid function, see <a href="../background/neural-mass-models.html">Neural Mass Models</a>
+  (background reading). This page assumes familiarity with the
+  <a href="model-jansen-rit.html">Jansen-Rit model</a>.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2>Why a Fourth Population?</h2>
+
+<p>
+  When depth electrodes record a seizure onset in temporal lobe epilepsy, the most common
+  pattern is <strong>low-voltage fast activity (LVFA)</strong> — a sudden drop in signal
+  amplitude followed by rapid oscillations at 15–25 Hz. This is the electrographic
+  signature of seizure onset, visible on nearly every SEEG recording of temporal lobe
+  seizures.
+</p>
+
+<p>
+  The 3-population Jansen-Rit model cannot reproduce LVFA. It has only one type of
+  inhibition, so it can produce either normal alpha rhythms or large epileptiform spikes —
+  but not the low-amplitude, high-frequency pattern seen at seizure onset. To explain LVFA,
+  you need to separate inhibition into two distinct mechanisms.
+</p>
+
+<h3>Two Types of Inhibition in Real Cortex</h3>
+
+<p>
+  Real cortical circuits contain (at least) two distinct populations of inhibitory
+  interneurons that differ in where they connect and how fast they act:
+</p>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Property</th><th>Slow Dendritic Inhibition</th><th>Fast Somatic Inhibition</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Target</td><td>Pyramidal cell dendrites</td><td>Pyramidal cell soma</td></tr>
+    <tr><td>Receptor</td><td>GABA-A (slow component)</td><td>GABA-A (fast component)</td></tr>
+    <tr><td>Time constant</td><td>~20 ms (b = 50 s⁻¹)</td><td>~2 ms (g = 500 s⁻¹)</td></tr>
+    <tr><td>Effect</td><td>Modulates overall excitability</td><td>Gates individual spikes</td></tr>
+    <tr><td>Model parameter</td><td>B (amplitude)</td><td>G (amplitude)</td></tr>
+    <tr><td>Abbreviation</td><td>SDI</td><td>FSI</td></tr>
+  </tbody>
+</table>
+
+<h3>The Seizure Mechanism</h3>
+
+<p>
+  Wendling's key insight (2002): the transition to seizure involves a <strong>selective
+  impairment of slow dendritic inhibition</strong> while fast somatic inhibition remains
+  intact or even increases. When slow inhibition weakens (B decreases), pyramidal cells
+  become more excitable. But fast inhibition (G) is still active — and because it operates
+  on a much faster timescale, it produces rapid oscillations rather than the large-amplitude
+  spikes you get when all inhibition fails.
+</p>
+
+<p>
+  There is also a critical cross-inhibition pathway: slow inhibitory interneurons (SDI)
+  normally suppress fast inhibitory interneurons (FSI). When SDI weaken, FSI are
+  <strong>disinhibited</strong> — they become more active, producing even stronger fast
+  inhibition. This is the "inhibition of inhibition" pathway, mediated by connectivity
+  constant C6.
+</p>
+
+<div class="callout callout-key">
+  <strong>The elegance of the Wendling model</strong>
+  You do not need to add complexity everywhere. One additional population, with the right
+  connectivity, is enough to explain a fundamental feature of seizure dynamics. The entire
+  interictal-to-ictal transition is controlled by just two parameters: B (slow inhibition
+  strength) and G (fast inhibition strength).
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2>The Four Populations</h2>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Population</th><th>Abbr.</th><th>Type</th><th>Targets</th><th>PSP Kernel</th><th>Key Param</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Pyramidal cells</td><td>PY</td><td>Excitatory (output)</td>
+      <td>EI, SDI, FSI</td><td>—</td><td>—</td>
+    </tr>
+    <tr>
+      <td>Excitatory interneurons</td><td>EI</td><td>Excitatory</td>
+      <td>PY</td><td>He (A, a)</td><td>A</td>
+    </tr>
+    <tr>
+      <td>Slow dendritic inhibitory</td><td>SDI</td><td>Inhibitory (GABA-A slow)</td>
+      <td>PY, FSI</td><td>Hi (B, b)</td><td>B</td>
+    </tr>
+    <tr>
+      <td>Fast somatic inhibitory</td><td>FSI</td><td>Inhibitory (GABA-A fast)</td>
+      <td>PY</td><td>Hg (G, g)</td><td>G</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  <strong>Pyramidal cells (PY)</strong> are the main output neurons. The summed post-synaptic
+  potentials on their membrane is what the electrode measures. They project to all three
+  interneuron populations.
+</p>
+<p>
+  <strong>Excitatory interneurons (EI)</strong> receive input from pyramidal cells and feed
+  excitation back — a positive feedback loop that amplifies activity. Identical to the
+  Jansen-Rit excitatory population.
+</p>
+<p>
+  <strong>Slow dendritic inhibitory interneurons (SDI)</strong> receive input from pyramidal
+  cells and send slow inhibition back to pyramidal dendrites. They also inhibit FSI interneurons
+  (the cross-inhibition pathway). Correspond to the single inhibitory population in
+  Jansen-Rit.
+</p>
+<p>
+  <strong>Fast somatic inhibitory interneurons (FSI)</strong> — the new population — receive
+  excitation from pyramidal cells and inhibition from SDI. They project fast inhibition to
+  pyramidal cell bodies. Their 2 ms time constant is fast enough to gate individual spikes,
+  producing rapid oscillations when active.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2>Circuit Diagram</h2>
+
+<pre class="mermaid">
+graph TD
+  INPUT(["External input p(t)"])
+  EXC["Excitatory Interneurons\n(EI — amplify signal)"]
+  PYR["**Pyramidal Cells**\n(output: y1 − y2 − y3)"]
+  SDI["Slow Dendritic Inhibitory\n(SDI — GABA-A slow)"]
+  FSI["Fast Somatic Inhibitory\n(FSI — GABA-A fast)"]
+
+  INPUT -->|"p(t)"| EXC
+  PYR -->|"C1"| EXC
+  EXC -->|"C2 · excitatory"| PYR
+  PYR -->|"C3"| SDI
+  SDI -->|"C4 · slow inhibitory"| PYR
+  PYR -->|"C5"| FSI
+  SDI -.->|"C6 · cross-inhibition"| FSI
+  FSI -->|"C7 · fast inhibitory"| PYR
+
+  style EXC fill:#0a3d1a,stroke:#4ade80,color:#4ade80
+  style PYR fill:#162450,stroke:#5b8dee,color:#5b8dee
+  style SDI fill:#3d0a0a,stroke:#f87171,color:#f87171
+  style FSI fill:#2a1850,stroke:#a78bfa,color:#a78bfa
+  style INPUT fill:#1a3a3a,stroke:#2dd4bf,color:#2dd4bf
+</pre>
+
+<p>
+  The dashed C6 arrow is the cross-inhibition pathway: SDI interneurons inhibit FSI
+  interneurons. When SDI weaken (B decreases), FSI are disinhibited and become more active.
+  This is the mechanism behind low-voltage fast activity at seizure onset.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2>PSP Kernels</h2>
+
+<p>
+  Each population's synaptic response is modeled as a second-order linear system —
+  an impulse response that converts incoming firing rate pulses into smooth post-synaptic
+  potentials. The Wendling model has three kernels (vs two in Jansen-Rit):
+</p>
+
+<pre><code><span class="cm"># Excitatory PSP kernel (same as Jansen-Rit)</span>
+<span class="nm">h_e(t)</span> = A · a · t · exp(-a·t)     <span class="cm">A = 5.0 mV,  a = 100 s⁻¹  (τ = 10 ms)</span>
+
+<span class="cm"># Slow inhibitory PSP kernel (same as Jansen-Rit)</span>
+<span class="nm">h_i(t)</span> = B · b · t · exp(-b·t)     <span class="cm">B = 25.0 mV, b = 50 s⁻¹   (τ = 20 ms)</span>
+
+<span class="cm"># Fast inhibitory PSP kernel (NEW in Wendling)</span>
+<span class="nm">h_g(t)</span> = G · g · t · exp(-g·t)     <span class="cm">G = 10.0 mV, g = 500 s⁻¹  (τ = 2 ms)</span></code></pre>
+
+<p>
+  The amplitude parameter (A, B, or G) controls how large the voltage response is.
+  The rate constant (a, b, or g) controls how fast it rises and decays. Note that
+  h<sub>g</sub> is <strong>10x faster</strong> than h<sub>e</sub> and <strong>25x
+  faster</strong> than h<sub>i</sub> — fast enough to track individual spikes rather
+  than smoothing over them.
+</p>
+
+<p>
+  The <strong>sigmoid function</strong> S(v) = 2·e0 / (1 + exp(r·(v0 - v))) is identical
+  to Jansen-Rit, converting membrane potential to firing rate. Already implemented in
+  <a href="models-utils.html">concord-models-utils</a>.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2>The Equations</h2>
+
+<h3>State Variables</h3>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Index</th><th>Variable</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>0</td><td>y0</td><td>Excitatory PSP on pyramidal cells (from EI feedback)</td></tr>
+    <tr><td>1</td><td>y1</td><td>PSP on excitatory interneurons (from external input + PY)</td></tr>
+    <tr><td>2</td><td>y2</td><td>Slow inhibitory PSP on pyramidal cells (from SDI)</td></tr>
+    <tr><td>3</td><td>y3</td><td>Fast inhibitory PSP on pyramidal cells (from FSI)</td></tr>
+    <tr><td>4</td><td>y4</td><td>Slow inhibitory PSP on FSI (SDI → FSI cross-inhibition)</td></tr>
+    <tr><td>5–9</td><td>y5–y9</td><td>Time derivatives of y0–y4 (velocities)</td></tr>
+  </tbody>
+</table>
+
+<h3>ODE System (10 equations)</h3>
+
+<pre><code><span class="cm"># Position derivatives (linking to velocities)</span>
+<span class="nm">dy0/dt</span> = y5
+<span class="nm">dy1/dt</span> = y6
+<span class="nm">dy2/dt</span> = y7
+<span class="nm">dy3/dt</span> = y8
+<span class="nm">dy4/dt</span> = y9
+
+<span class="cm"># Block 0: Excitatory feedback → pyramidal cells (He kernel)</span>
+<span class="cm"># PY receives net input: excitatory minus both inhibitory PSPs</span>
+<span class="nm">dy5/dt</span> = A·a·S(y1 - y2 - y3) - 2a·y5 - a²·y0
+
+<span class="cm"># Block 1: External input + pyramidal → excitatory interneurons (He kernel)</span>
+<span class="nm">dy6/dt</span> = A·a·(p(t) + C2·S(C1·y0)) - 2a·y6 - a²·y1
+
+<span class="cm"># Block 2: Pyramidal → slow inhibitory → pyramidal (Hi kernel)</span>
+<span class="nm">dy7/dt</span> = B·b·C4·S(C3·y0) - 2b·y7 - b²·y2
+
+<span class="cm"># Block 3: Fast inhibitory → pyramidal (Hg kernel)</span>
+<span class="cm"># FSI receive excitation from PY (C5·y0) minus cross-inhibition from SDI (C6·y4)</span>
+<span class="nm">dy8/dt</span> = G·g·C7·S(C5·y0 - C6·y4) - 2g·y8 - g²·y3
+
+<span class="cm"># Block 4: Slow inhibitory → fast inhibitory cross-inhibition (Hi kernel)</span>
+<span class="cm"># Same pyramidal input as block 2 but without C4 scaling</span>
+<span class="nm">dy9/dt</span> = B·b·S(C3·y0) - 2b·y9 - b²·y4
+
+<span class="cm"># Output signal (simulated SEEG)</span>
+<span class="nm">output</span> = y1 - y2 - y3</code></pre>
+
+<div class="callout callout-note">
+  <strong>The critical equation: Block 3</strong>
+  The sigmoid argument in block 3 is <code>S(C5·y0 - C6·y4)</code> — FSI interneurons
+  receive excitation from pyramidal cells (C5·y0) <em>minus</em> inhibition from SDI
+  (C6·y4). This is the "inhibition of inhibition" pathway. When SDI weaken
+  (B decreases → y4 shrinks), the subtractive term diminishes, FSI receive more net
+  excitation, and fast inhibition increases — producing low-voltage fast activity.
+</div>
+
+<p>
+  The output signal <code>y1 - y2 - y3</code> represents the net post-synaptic potential
+  on pyramidal cell membranes: excitatory input from EI (y1) minus slow inhibition from
+  SDI (y2) minus fast inhibition from FSI (y3). Compare with Jansen-Rit's <code>y1 - y2</code>,
+  which lacks the fast inhibitory subtraction.
+</p>
+
+<div class="callout callout-tip">
+  <strong>8-variable reduction</strong>
+  Desroches et al. (2016) showed that y4 is proportional to y2 — both are driven by the
+  same input S(C3·y0) through the same Hi kernel (B, b parameters), so y4 = (1/C4)·y2.
+  The C6·y4 term can be replaced with (C6/C4)·y2, reducing the system to 8 variables.
+  Concord implements the full 10-variable system for clarity and consistency with the
+  literature, but this reduction preserves all dynamical features.
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2>Connectivity Constants</h2>
+
+<p>
+  All seven constants are derived from a single base value C = 135:
+</p>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Constant</th><th>Formula</th><th>Default</th><th>Connection</th><th>In JR?</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>C1</td><td>C</td><td>135</td><td>PY → EI</td><td>Yes</td></tr>
+    <tr><td>C2</td><td>0.8 · C</td><td>108</td><td>EI → PY</td><td>Yes</td></tr>
+    <tr><td>C3</td><td>0.25 · C</td><td>33.75</td><td>PY → SDI</td><td>Yes</td></tr>
+    <tr><td>C4</td><td>0.25 · C</td><td>33.75</td><td>SDI → PY</td><td>Yes</td></tr>
+    <tr><td>C5</td><td>0.3 · C</td><td>40.5</td><td>PY → FSI</td><td><strong>New</strong></td></tr>
+    <tr><td>C6</td><td>0.1 · C</td><td>13.5</td><td>SDI → FSI</td><td><strong>New</strong></td></tr>
+    <tr><td>C7</td><td>0.8 · C</td><td>108</td><td>FSI → PY</td><td><strong>New</strong></td></tr>
+  </tbody>
+</table>
+
+<p>
+  These ratios are confirmed by Chong et al. (2011, Appendix B), Desroches et al. (2016),
+  and all surveyed implementations. Note that C3 = C4 (symmetric slow inhibitory loop) and
+  C2 = C7 (equal gain for excitatory feedback and fast inhibitory output).
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2>Parameters</h2>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Name</th><th>Default</th><th>Lower</th><th>Upper</th><th>Units</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>A</td><td>5.0</td><td>2.0</td><td>10.0</td><td>mV</td><td>Max excitatory PSP amplitude</td></tr>
+    <tr><td>B</td><td>25.0</td><td>1.0</td><td>50.0</td><td>mV</td><td>Max slow inhibitory PSP amplitude</td></tr>
+    <tr><td>G</td><td>10.0</td><td>0.0</td><td>80.0</td><td>mV</td><td>Max fast inhibitory PSP amplitude</td></tr>
+    <tr><td>a</td><td>100</td><td>50</td><td>200</td><td>1/s</td><td>Excitatory rate constant (τ = 10 ms)</td></tr>
+    <tr><td>b</td><td>50</td><td>10</td><td>100</td><td>1/s</td><td>Slow inhibitory rate constant (τ = 20 ms)</td></tr>
+    <tr><td>g</td><td>500</td><td>100</td><td>1000</td><td>1/s</td><td>Fast inhibitory rate constant (τ = 2 ms)</td></tr>
+    <tr><td>C</td><td>135</td><td>50</td><td>500</td><td></td><td>Global connectivity strength</td></tr>
+    <tr><td>e0</td><td>2.5</td><td>1.0</td><td>5.0</td><td>1/s</td><td>Half of maximum firing rate</td></tr>
+    <tr><td>v0</td><td>6.0</td><td>3.0</td><td>12.0</td><td>mV</td><td>PSP at half-maximal firing rate</td></tr>
+    <tr><td>r</td><td>0.56</td><td>0.1</td><td>1.0</td><td>1/mV</td><td>Sigmoid steepness</td></tr>
+    <tr><td>p</td><td>90</td><td>0</td><td>500</td><td>Hz</td><td>Mean external input</td></tr>
+    <tr><td>sigma</td><td>30</td><td>0</td><td>100</td><td>Hz</td><td>Input noise standard deviation</td></tr>
+  </tbody>
+</table>
+
+<div class="callout callout-note">
+  <strong>Differences from Jansen-Rit defaults</strong>
+  A = 5.0 (vs 3.25 in JR), p = 90 Hz (vs 220 Hz), sigma = 30 Hz (vs 22 Hz). Most Wendling
+  implementations use these higher excitatory gain and lower input values. The three new
+  parameters are G = 10.0 mV, g = 500 s⁻¹, and note that G = 0 is a valid regime
+  (type 6: no fast inhibition).
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2>The Six Dynamical Regimes</h2>
+
+<p>
+  The signature result of Wendling (2002): by varying only B (slow inhibition) and G
+  (fast inhibition) while holding A constant, the model transitions through six distinct
+  EEG activity patterns. This reproduces the full spectrum from normal background to
+  seizure activity.
+</p>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Type</th><th>Activity</th><th>A</th><th>B</th><th>G</th><th>Description</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>1</td><td>Normal background</td><td>5</td><td>50</td><td>15</td><td>Broadband 1–7 Hz, no dominant peak. Strong slow inhibition keeps activity low.</td></tr>
+    <tr><td>2</td><td>Sporadic spikes</td><td>5</td><td>40</td><td>15</td><td>Occasional large-amplitude transients as slow inhibition weakens.</td></tr>
+    <tr><td>3</td><td>Sustained spike-wave</td><td>5</td><td>25</td><td>15</td><td>Regular 3–6 Hz spike-wave discharges. Classic interictal pattern.</td></tr>
+    <tr><td>4</td><td>Slow rhythmic activity</td><td>5</td><td>10</td><td>15</td><td>Alpha-like 8–13 Hz rhythm. Slow inhibition very weak.</td></tr>
+    <tr><td>5</td><td>Low-voltage fast activity</td><td>5</td><td>5</td><td>25</td><td>LVFA: 10–20 Hz, low amplitude. The seizure onset pattern.</td></tr>
+    <tr><td>6</td><td>Slow quasi-sinusoidal</td><td>5</td><td>15</td><td>0</td><td>8–13 Hz with no fast inhibition (G = 0). Shows effect of absent GABA-A fast.</td></tr>
+  </tbody>
+</table>
+
+<div class="callout callout-key">
+  <strong>Clinical significance of Type 5 (LVFA)</strong>
+  Low-voltage fast activity is consistently observed at seizure onset in temporal lobe
+  epilepsy depth recordings. The Wendling model explains it mechanistically: when slow
+  dendritic inhibition fails (B → low), fast somatic inhibition takes over (G remains
+  high), producing rapid low-amplitude oscillations. This is the model's primary clinical
+  contribution.
+</div>
+
+<!-- ═══════════ INTERACTIVE SIMULATION ═══════════ -->
+<h2>Interactive Simulation</h2>
+
+<p>
+  Drag the <strong>B</strong> and <strong>G</strong> sliders to explore the six dynamical
+  regimes. The simulation runs the full 10-variable Wendling ODE system in your browser
+  using RK4 integration. Use the preset buttons to jump to each regime from the table above.
+</p>
+
+<div class="viz-container">
+  <div id="sim-plot" style="width:100%;height:300px;"></div>
+  <div class="slider-row">
+    <label>B (slow inhib.)</label>
+    <input type="range" id="sl-B" min="1" max="50" step="1" value="25">
+    <span class="slider-val" id="val-B">25 mV</span>
+    <span class="regime-label regime-spike-wave" id="regime-badge">spike-wave</span>
+  </div>
+  <div class="slider-row">
+    <label>G (fast inhib.)</label>
+    <input type="range" id="sl-G" min="0" max="80" step="1" value="10">
+    <span class="slider-val" id="val-G">10 mV</span>
+  </div>
+  <div class="preset-row">
+    <button class="preset-btn" onclick="setPreset(50,15)">Type 1: background</button>
+    <button class="preset-btn" onclick="setPreset(40,15)">Type 2: spikes</button>
+    <button class="preset-btn" onclick="setPreset(25,15)">Type 3: spike-wave</button>
+    <button class="preset-btn" onclick="setPreset(10,15)">Type 4: rhythmic</button>
+    <button class="preset-btn" onclick="setPreset(5,25)">Type 5: LVFA</button>
+    <button class="preset-btn" onclick="setPreset(15,0)">Type 6: sinusoidal</button>
+  </div>
+  <div class="viz-caption">
+    Live Wendling simulation (10-variable ODE, RK4, dt = 0.1 ms, downsampled to 512 Hz).
+    Output signal = y1 − y2 − y3. A = 5.0 mV, p = 90 Hz, sigma = 30 Hz.
+  </div>
+</div>
+
+<!-- ═══════════ B-G REGIME MAP ═══════════ -->
+<h2>B–G Parameter Space</h2>
+
+<p>
+  This map sweeps the (B, G) parameter plane and shows how the model's output character
+  changes. Each pixel is a short simulation; the color encodes the RMS amplitude of the
+  output signal. The six regime points from the table above are overlaid as markers.
+  This reproduces the signature figure from Wendling (2002, Figure 10).
+</p>
+
+<div class="viz-container">
+  <div id="regime-map" style="width:100%;height:400px;"></div>
+  <div class="viz-caption">
+    Each point: 1.5 s simulation, 0.5 s transient discarded. Color = log(RMS amplitude).
+    Markers show the six canonical regime parameter sets. The crosshair tracks the
+    current slider position from the simulation above.
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2>Comparison with Jansen-Rit</h2>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Aspect</th><th>Jansen-Rit</th><th>Wendling</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Populations</td><td>3 (PY, EI, II)</td><td>4 (PY, EI, SDI, FSI)</td></tr>
+    <tr><td>State variables</td><td>6</td><td>10</td></tr>
+    <tr><td>Inhibitory types</td><td>1 (combined)</td><td>2 (slow dendritic + fast somatic)</td></tr>
+    <tr><td>Connectivity constants</td><td>C1–C4</td><td>C1–C7</td></tr>
+    <tr><td>Synaptic gains</td><td>A, B</td><td>A, B, G</td></tr>
+    <tr><td>Time constants</td><td>a, b</td><td>a, b, g</td></tr>
+    <tr><td>Output</td><td>y1 − y2</td><td>y1 − y2 − y3</td></tr>
+    <tr><td>Regimes</td><td>3 (noise, alpha, spikes)</td><td>6 (background through ictal)</td></tr>
+    <tr><td>Seizure dynamics</td><td>Limited to spikes</td><td>Full interictal-to-ictal transition</td></tr>
+  </tbody>
+</table>
+
+<p>
+  The first three equation blocks (y0, y1, y2) are structurally identical to Jansen-Rit,
+  except that the pyramidal input sigmoid changes from S(y1 − y2) to
+  S(y1 − y2 − y3) — the subtraction of the fast inhibitory PSP.
+</p>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2>Implementation Notes</h2>
+
+<p>
+  The Wendling model is well-established in the computational neuroscience literature,
+  but unlike the Jansen-Rit model, <strong>no canonical reference implementation
+  exists</strong>. Key findings from cross-referencing six implementations:
+</p>
+
+<ul>
+  <li>
+    <strong>The Virtual Brain (TVB) does not have a Wendling model.</strong>
+    TVB's <code>ZetterbergJansen</code> (12 state variables, 5 gamma constants) descends
+    from Zetterberg et al. (1978) — a different extension of the Jansen-Rit lineage that
+    models stellate cells and includes inhibitory self-feedback. It is not the Wendling model.
+  </li>
+  <li>
+    <strong>Integration method:</strong> most community implementations use Euler or
+    Euler-Maruyama. Concord uses RK4 (more accurate), consistent with the Jansen-Rit
+    implementation.
+  </li>
+  <li>
+    <strong>g parameter:</strong> the standard value is 500 s⁻¹ (τ = 2 ms). One
+    implementation (Carvalho et al. 2021, PLOS Comp Biol) uses g = 350 — this is a
+    deliberate modification for coupled population analysis, not the standard.
+  </li>
+  <li>
+    <strong>All implementations agree on:</strong> the ODE structure, connectivity constant
+    ratios (C1–C7), sigmoid function, and output equation (y1 − y2 − y3).
+  </li>
+</ul>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2>Package Structure</h2>
+<pre><code>concord-model-wendling/
+  src/concord_model_wendling/
+    __init__.py       exports Wendling
+    equations.py      pure derivative function (10 ODEs)
+    model.py          Wendling class implementing Model ABC</code></pre>
+
+<h2>equations.py</h2>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">wendling_derivatives(y, t, p_input, A, B, G, a, b, g, C1, C2, C3, C4, C5, C6, C7, e0, v0, r) → ndarray</span></div>
+  <div class="api-body">
+    <p>
+      Compute derivatives of the 10-variable Wendling ODE system. Pure numerical function
+      with no Model ABC knowledge.
+    </p>
+    <table>
+      <thead><tr><th>Parameter</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>y</td><td>State vector, shape (10,). [y0..y4, y5..y9]</td></tr>
+        <tr><td>t</td><td>Current time (kept for integrator interface)</td></tr>
+        <tr><td>p_input</td><td>Instantaneous external input (mean + noise sample)</td></tr>
+        <tr><td>A, B, G</td><td>Max EPSP / slow IPSP / fast IPSP amplitude (mV)</td></tr>
+        <tr><td>a, b, g</td><td>Excitatory / slow inh. / fast inh. time constants (1/s)</td></tr>
+        <tr><td>C1..C7</td><td>Connectivity constants (derived from C)</td></tr>
+        <tr><td>e0, v0, r</td><td>Sigmoid parameters</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h2>model.py — Wendling</h2>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method cls">ABC</span><span class="api-path">Wendling(Model)</span></div>
+  <div class="api-body">
+    <p>
+      Implements the <a href="core.html">Model ABC</a>. Single-node cortical column
+      producing seizure dynamics across six activity regimes.
+    </p>
+    <table>
+      <thead><tr><th>Constructor</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>dt</td><td>float</td><td>Internal integration time step in seconds. Default 1e-4 (0.1 ms).</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method prop">property</span><span class="api-path">Wendling.name → str</span></div>
+  <div class="api-body"><p>Returns <code>"wendling"</code>.</p></div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">Wendling.default_parameters() → ParameterVector</span></div>
+  <div class="api-body">
+    <p>Returns a ParameterVector with 12 named parameters, their default values, and bounds.
+      See the <a href="#parameters">Parameters</a> table above.</p>
+    <p>
+      Connectivity constants are derived from C: C1 = C, C2 = 0.8C, C3 = 0.25C, C4 = 0.25C,
+      C5 = 0.3C, C6 = 0.1C, C7 = 0.8C.
+    </p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">Wendling.simulate(parameters, duration_s, fs, seed=None) → ModelOutput</span></div>
+  <div class="api-body">
+    <p>Run the simulation and return a ModelOutput.</p>
+    <table>
+      <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>parameters</td><td>ParameterVector</td><td>Model parameters (from <code>default_parameters()</code> or modified)</td></tr>
+        <tr><td>duration_s</td><td>float</td><td>Simulation duration in seconds</td></tr>
+        <tr><td>fs</td><td>float</td><td>Output sampling rate in Hz</td></tr>
+        <tr><td>seed</td><td>int | None</td><td>Random seed for reproducibility</td></tr>
+      </tbody>
+    </table>
+    <p>The returned ModelOutput contains:</p>
+    <ul>
+      <li><code>data</code> — shape (1, n_samples): the simulated signal (y1 − y2 − y3)</li>
+      <li><code>state_variables</code> — dict with keys "y0" through "y9", each shape (1, n_samples)</li>
+      <li><code>time_axis</code> — time stamps in seconds</li>
+      <li><code>node_labels</code> — ["node_0"]</li>
+    </ul>
+  </div>
+</div>
+
+<h2>Entry Point Registration</h2>
+
+<p>In <code>pyproject.toml</code>:</p>
+<pre><code>[project.entry-points.<span class="st">"concord.models"</span>]
+wendling = <span class="st">"concord_model_wendling:Wendling"</span></code></pre>
+<p>
+  This allows <code>concord-fit</code> (and other discovery tools) to find the model without hard imports.
+  See <a href="../background/entry-points.html">Python Entry Points</a> for how discovery works.
+</p>
+
+<h2>Usage Example</h2>
+
+<pre><code><span class="kw">from</span> concord_model_wendling <span class="kw">import</span> Wendling
+
+model = Wendling()
+params = model.default_parameters()
+
+<span class="cm"># Simulate 3 seconds at 1024 Hz — default is Type 3 (spike-wave)</span>
+result = model.simulate(params, duration_s=<span class="nb">3.0</span>, fs=<span class="nb">1024.0</span>, seed=<span class="nb">42</span>)
+signal = result.data[<span class="nb">0</span>, :]
+
+<span class="cm"># Switch to Type 5: low-voltage fast activity (seizure onset)</span>
+p_B = params.names.index(<span class="st">"B"</span>)
+p_G = params.names.index(<span class="st">"G"</span>)
+params.values[p_B] = <span class="nb">5.0</span>     <span class="cm"># weaken slow inhibition</span>
+params.values[p_G] = <span class="nb">25.0</span>    <span class="cm"># strengthen fast inhibition</span>
+lvfa = model.simulate(params, duration_s=<span class="nb">3.0</span>, fs=<span class="nb">1024.0</span>, seed=<span class="nb">42</span>)
+
+<span class="cm"># Switch to Type 1: normal background</span>
+params.values[p_B] = <span class="nb">50.0</span>    <span class="cm"># strong slow inhibition</span>
+params.values[p_G] = <span class="nb">15.0</span>    <span class="cm"># moderate fast inhibition</span>
+normal = model.simulate(params, duration_s=<span class="nb">3.0</span>, fs=<span class="nb">1024.0</span>, seed=<span class="nb">42</span>)</code></pre>
+
+<!-- ═══════════════════════════════════════════════════════════════════════ -->
+<h2>References</h2>
+
+<ul>
+  <li>Wendling, F., Bartolomei, F., Bellanger, J.J. &amp; Chauvel, P. (2002). Epileptic fast activity can be explained by a model of impaired GABAergic dendritic inhibition. <em>European Journal of Neuroscience</em>, 15(9), 1499-1508. <a href="https://doi.org/10.1046/j.1460-9568.2002.01985.x">doi:10.1046/j.1460-9568.2002.01985.x</a></li>
+  <li>Wendling, F., et al. (2005). Interictal to ictal transition in human temporal lobe epilepsy: insights from a computational model of intracerebral EEG. <em>Clinical Neurophysiology</em>, 116(9), 2039-2053. <a href="https://doi.org/10.1016/j.clinph.2005.04.011">doi:10.1016/j.clinph.2005.04.011</a></li>
+  <li>Desroches, M., et al. (2016). Slow-fast analysis of a neural mass model with slow inhibition. <em>Opera Medica et Physiologica</em>, 2(3-4), 228-234. <a href="https://doi.org/10.20388/OMP2016.003.0034">doi:10.20388/OMP2016.003.0034</a></li>
+  <li>Chong, M.S., et al. (2011). Bifurcation analysis of the Wendling neural mass model. <em>IFAC World Congress</em>. <a href="https://doi.org/10.3182/20110828-6-IT-1002.03065">doi:10.3182/20110828-6-IT-1002.03065</a> [Appendix B: complete connectivity constants]</li>
+  <li>Jansen, B.H. &amp; Rit, V.G. (1995). Electroencephalogram and visual evoked potential generation in a mathematical model of coupled cortical columns. <em>Biological Cybernetics</em>, 73(4), 357-366. <a href="https://doi.org/10.1007/BF00199471">doi:10.1007/BF00199471</a></li>
+  <li>Carvalho, V.R., et al. (2021). Probing the Wendling neural mass model dynamics with coupled populations. <em>PLOS Computational Biology</em>. <a href="https://doi.org/10.1371/journal.pcbi.1009643">doi:10.1371/journal.pcbi.1009643</a></li>
+</ul>
+
+</article>
+</main>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// Plotly dark theme matching docs CSS variables
+// ═══════════════════════════════════════════════════════════════════════════
+const plotLayout = {
+  paper_bgcolor: '#1a1d27',
+  plot_bgcolor: '#1a1d27',
+  font: { color: '#dde1f0', family: '-apple-system, sans-serif', size: 12 },
+  margin: { t: 30, r: 20, b: 40, l: 55 },
+  xaxis: { gridcolor: '#2e3452', zerolinecolor: '#2e3452' },
+  yaxis: { gridcolor: '#2e3452', zerolinecolor: '#2e3452' },
+};
+const plotConfig = { responsive: true, displayModeBar: false };
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Sigmoid and Gaussian noise (shared)
+// ═══════════════════════════════════════════════════════════════════════════
+function sigmoid(v, e0, v0, r) {
+  const ex = Math.min(Math.max(r * (v0 - v), -500), 500);
+  return 2 * e0 / (1 + Math.exp(ex));
+}
+
+let _spare = null;
+function gaussRand() {
+  if (_spare !== null) { const v = _spare; _spare = null; return v; }
+  let u, v, s;
+  do { u = Math.random()*2-1; v = Math.random()*2-1; s = u*u+v*v; } while (s >= 1 || s === 0);
+  const mul = Math.sqrt(-2*Math.log(s)/s);
+  _spare = v * mul;
+  return u * mul;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Wendling ODE system (10 variables)
+// ═══════════════════════════════════════════════════════════════════════════
+function wendlingDerivatives(y, pIn, A, B, G, a, b, g, C1, C2, C3, C4, C5, C6, C7, e0, v0, r) {
+  const S = (v) => sigmoid(v, e0, v0, r);
+  const dy = new Float64Array(10);
+
+  // Position derivatives
+  dy[0] = y[5];
+  dy[1] = y[6];
+  dy[2] = y[7];
+  dy[3] = y[8];
+  dy[4] = y[9];
+
+  // Velocity derivatives
+  dy[5] = A*a*S(y[1]-y[2]-y[3]) - 2*a*y[5] - a*a*y[0];
+  dy[6] = A*a*(pIn + C2*S(C1*y[0])) - 2*a*y[6] - a*a*y[1];
+  dy[7] = B*b*C4*S(C3*y[0]) - 2*b*y[7] - b*b*y[2];
+  dy[8] = G*g*C7*S(C5*y[0] - C6*y[4]) - 2*g*y[8] - g*g*y[3];
+  dy[9] = B*b*S(C3*y[0]) - 2*b*y[9] - b*b*y[4];
+
+  return dy;
+}
+
+function rk4Step(y, dt, pIn, A, B, G, a, b, g, C1, C2, C3, C4, C5, C6, C7, e0, v0, r) {
+  const args = [pIn, A, B, G, a, b, g, C1, C2, C3, C4, C5, C6, C7, e0, v0, r];
+  const n = y.length;
+
+  const k1 = wendlingDerivatives(y, ...args);
+  const y2 = new Float64Array(n);
+  for (let i = 0; i < n; i++) y2[i] = y[i] + 0.5*dt*k1[i];
+
+  const k2 = wendlingDerivatives(y2, ...args);
+  const y3 = new Float64Array(n);
+  for (let i = 0; i < n; i++) y3[i] = y[i] + 0.5*dt*k2[i];
+
+  const k3 = wendlingDerivatives(y3, ...args);
+  const y4 = new Float64Array(n);
+  for (let i = 0; i < n; i++) y4[i] = y[i] + dt*k3[i];
+
+  const k4 = wendlingDerivatives(y4, ...args);
+  const yOut = new Float64Array(n);
+  for (let i = 0; i < n; i++) yOut[i] = y[i] + (dt/6)*(k1[i] + 2*k2[i] + 2*k3[i] + k4[i]);
+  return yOut;
+}
+
+function simulateWendling(B, G, duration, dt, outFs) {
+  const A = 5.0, a = 100.0, b = 50.0, g = 500.0;
+  const e0 = 2.5, v0 = 6.0, r = 0.56;
+  const C = 135.0;
+  const C1 = C, C2 = 0.8*C, C3 = 0.25*C, C4 = 0.25*C;
+  const C5 = 0.3*C, C6 = 0.1*C, C7 = 0.8*C;
+  const p = 90.0, sigma = 30.0;
+
+  const nSteps = Math.ceil(duration / dt);
+  const decimFactor = Math.round(1 / (dt * outFs));
+
+  let y = new Float64Array(10);
+  const output = [];
+  for (let i = 0; i < nSteps; i++) {
+    const pNoise = p + sigma * gaussRand();
+    y = rk4Step(y, dt, pNoise, A, B, G, a, b, g, C1, C2, C3, C4, C5, C6, C7, e0, v0, r);
+    if (i % decimFactor === 0) {
+      output.push(y[1] - y[2] - y[3]);
+    }
+  }
+  return output;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 1. Live simulation with sliders
+// ═══════════════════════════════════════════════════════════════════════════
+function getRegimeInfo(B, G) {
+  // Approximate regime classification based on B-G position
+  if (G < 5)                    return { name: 'sinusoidal', cls: 'regime-sine' };
+  if (B >= 45 && G >= 5)        return { name: 'background', cls: 'regime-bg' };
+  if (B >= 35 && B < 45)        return { name: 'sporadic spikes', cls: 'regime-spikes' };
+  if (B >= 15 && B < 35 && G < 20) return { name: 'spike-wave', cls: 'regime-spike-wave' };
+  if (B >= 5 && B < 15 && G < 20) return { name: 'rhythmic', cls: 'regime-rhythmic' };
+  if (B < 15 && G >= 20)        return { name: 'LVFA', cls: 'regime-lvfa' };
+  return { name: 'transitional', cls: 'regime-bg' };
+}
+
+let simTimeout = null;
+function updateSimulation() {
+  if (simTimeout) clearTimeout(simTimeout);
+  simTimeout = setTimeout(runSimulation, 50);
+}
+
+function runSimulation() {
+  const B = parseFloat(document.getElementById('sl-B').value);
+  const G = parseFloat(document.getElementById('sl-G').value);
+  document.getElementById('val-B').textContent = B + ' mV';
+  document.getElementById('val-G').textContent = G + ' mV';
+
+  const info = getRegimeInfo(B, G);
+  const badge = document.getElementById('regime-badge');
+  badge.textContent = info.name;
+  badge.className = 'regime-label ' + info.cls;
+
+  const fs = 512;
+  const signal = simulateWendling(B, G, 2.5, 1e-4, fs);
+  // Discard first 0.5s transient
+  const start = Math.floor(0.5 * fs);
+  const trimmed = signal.slice(start);
+  const times = trimmed.map((_, i) => (i + start) / fs);
+
+  Plotly.react('sim-plot', [{
+    x: times, y: trimmed, type: 'scatter', mode: 'lines',
+    line: { color: '#4ade80', width: 1 },
+  }], {
+    ...plotLayout,
+    xaxis: { ...plotLayout.xaxis, title: 'Time (s)' },
+    yaxis: { ...plotLayout.yaxis, title: 'Output (mV)', autorange: true },
+    showlegend: false,
+    title: { text: 'Wendling output  (y1 − y2 − y3)', font: { size: 13, color: '#8890b0' }, x: 0.02, xanchor: 'left' },
+  }, plotConfig);
+
+  // Update crosshair on regime map if it exists
+  updateCrosshair(B, G);
+}
+
+function setPreset(B, G) {
+  document.getElementById('sl-B').value = B;
+  document.getElementById('sl-G').value = G;
+  updateSimulation();
+}
+
+document.getElementById('sl-B').addEventListener('input', updateSimulation);
+document.getElementById('sl-G').addEventListener('input', updateSimulation);
+
+// Run initial simulation
+runSimulation();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2. B-G Regime Map
+// ═══════════════════════════════════════════════════════════════════════════
+function computeRMS(signal, transientSamples) {
+  let sumSq = 0;
+  const start = transientSamples;
+  for (let i = start; i < signal.length; i++) sumSq += signal[i] * signal[i];
+  return Math.sqrt(sumSq / (signal.length - start));
+}
+
+let regimeMapReady = false;
+
+function buildRegimeMap() {
+  const bVals = [];
+  const gVals = [];
+  const zData = [];
+
+  const bMin = 1, bMax = 55, bStep = 3;
+  const gMin = 0, gMax = 55, gStep = 3;
+
+  for (let gv = gMin; gv <= gMax; gv += gStep) {
+    gVals.push(gv);
+  }
+  for (let bv = bMin; bv <= bMax; bv += bStep) {
+    bVals.push(bv);
+  }
+
+  // Compute RMS for each (B, G) point
+  for (let gi = 0; gi < gVals.length; gi++) {
+    const row = [];
+    for (let bi = 0; bi < bVals.length; bi++) {
+      const sig = simulateWendling(bVals[bi], gVals[gi], 1.5, 2e-4, 256);
+      const rms = computeRMS(sig, Math.floor(0.5 * 256));
+      row.push(Math.log10(rms + 0.001));
+    }
+    zData.push(row);
+  }
+
+  // Regime marker positions
+  const regimeMarkers = {
+    x: [50, 40, 25, 10, 5, 15],
+    y: [15, 15, 15, 15, 25, 0],
+    text: ['1: background', '2: spikes', '3: spike-wave', '4: rhythmic', '5: LVFA', '6: sinusoidal'],
+    mode: 'markers+text',
+    type: 'scatter',
+    marker: { color: '#dde1f0', size: 10, symbol: 'diamond', line: { color: '#0f1117', width: 2 } },
+    textposition: 'top center',
+    textfont: { color: '#dde1f0', size: 10 },
+    showlegend: false,
+  };
+
+  // Current position crosshair
+  const curB = parseFloat(document.getElementById('sl-B').value);
+  const curG = parseFloat(document.getElementById('sl-G').value);
+  const crosshair = {
+    x: [curB], y: [curG],
+    mode: 'markers',
+    type: 'scatter',
+    marker: { color: '#4ade80', size: 14, symbol: 'cross-thin', line: { width: 3, color: '#4ade80' } },
+    showlegend: false,
+  };
+
+  Plotly.react('regime-map', [
+    {
+      z: zData, x: bVals, y: gVals,
+      type: 'heatmap',
+      colorscale: [
+        [0, '#162450'],
+        [0.25, '#1a3a3a'],
+        [0.5, '#2a1850'],
+        [0.75, '#3d0a0a'],
+        [1, '#f87171'],
+      ],
+      showscale: true,
+      colorbar: { title: 'log(RMS)', titleside: 'right', tickfont: { size: 10 } },
+    },
+    regimeMarkers,
+    crosshair,
+  ], {
+    ...plotLayout,
+    xaxis: { ...plotLayout.xaxis, title: 'B — slow inhibition (mV)' },
+    yaxis: { ...plotLayout.yaxis, title: 'G — fast inhibition (mV)' },
+    showlegend: false,
+    title: { text: 'B–G parameter space (RMS amplitude)', font: { size: 13, color: '#8890b0' }, x: 0.02, xanchor: 'left' },
+  }, plotConfig);
+
+  regimeMapReady = true;
+}
+
+function updateCrosshair(B, G) {
+  if (!regimeMapReady) return;
+  Plotly.restyle('regime-map', { x: [[B]], y: [[G]] }, [2]);
+}
+
+// Build regime map after a short delay so the page renders first
+setTimeout(buildRegimeMap, 200);
+</script>
+
+</body>
+</html>

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>concord-demo — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Packages<span class="sep">›</span> Demo</div>
+<h1>concord-demo</h1>
+<p class="subtitle">Standalone static demo — runs entirely in the browser with no server</p>
+
+<div class="callout callout-key">
+  <strong>Role in the system</strong>
+  The demo is a self-contained static site that can be hosted on GitHub Pages (or any static host).
+  It uses pre-baked real SEEG data so the full interactive dashboard works without a Python server.
+  It shares all frontend JavaScript modules with concord-server.
+</div>
+
+<h2>How It Works</h2>
+
+<p>
+  The demo intercepts <code>window.fetch()</code> calls to <code>/api/*</code> endpoints
+  and returns pre-computed data from a baked JavaScript file instead of making real HTTP requests.
+  From the frontend's perspective, it behaves identically to the server — the same
+  <code>app.js</code>, <code>panels.js</code>, <code>timeseries.js</code>, etc. modules
+  render data the same way.
+</p>
+
+<h2>File Structure</h2>
+
+<pre><code>concord-demo/
+  index.html              HTML shell (similar to server's index.html)
+  demo.js                 Patches window.fetch to intercept API calls
+  demo_data.js            Pre-baked data (~10 MB): Base64-encoded Int16Array + JSON
+  bake_demo_data.py       Script to regenerate demo_data.js from live data
+  record_demo.py          Full pipeline: loads EDF, computes all metrics, writes demo_data.js
+  CNAME                   GitHub Pages custom domain config
+  app.js                  Copy of shared frontend controller
+  panels.js, timeseries.js, spectral.js, metrics.js, brain.js
+                          Copies of shared frontend render modules
+  style.css               Copy of shared styles
+  docs/                   Documentation site (this site) for GitHub Pages</code></pre>
+
+<h2>Source Data</h2>
+
+<p>The demo uses a 120-second window (t=90–210 s) from the sub-HUP117 ictal EDF recording:</p>
+
+<ul>
+  <li><strong>Dataset:</strong> HUP iEEG (OpenNeuro ds004100)</li>
+  <li><strong>Subject:</strong> sub-HUP117 — SEEG, temporal lobe</li>
+  <li><strong>Window:</strong> 120 seconds capturing a seizure onset at ~30 s into the window</li>
+  <li><strong>Montage:</strong> Bipolar</li>
+</ul>
+
+<h2>Baked Data Format</h2>
+
+<p>
+  <code>demo_data.js</code> exports a <code>DEMO_DATA</code> object containing pre-computed
+  responses for every API endpoint the frontend calls:
+</p>
+
+<table class="data-table">
+  <thead><tr><th>Key</th><th>Contents</th></tr></thead>
+  <tbody>
+    <tr><td>load</td><td>Channel names, metadata, sampling rate, duration, events</td></tr>
+    <tr><td>timeseries</td><td>Base64-encoded Int16Array (µV) with scale factor for lossless decompression</td></tr>
+    <tr><td>psd</td><td>Welch PSD: frequencies and power arrays per channel</td></tr>
+    <tr><td>spectrogram</td><td>STFT spectrogram: times, frequencies, and power (dB)</td></tr>
+    <tr><td>band_power</td><td>Per-channel band power across 6 frequency bands</td></tr>
+    <tr><td>line_length</td><td>Windowed line length heatmap data</td></tr>
+    <tr><td>hjorth</td><td>Windowed Hjorth parameters</td></tr>
+    <tr><td>electrode_positions</td><td>MNI coordinates for 3D brain visualization</td></tr>
+    <tr><td>brain_timeseries</td><td>Per-channel metric values over time for brain animation</td></tr>
+  </tbody>
+</table>
+
+<h2>Regenerating the Demo</h2>
+
+<pre><code><span class="cm"># From the project root, with the concord environment active:</span>
+python concord-demo/record_demo.py
+
+<span class="cm"># This reads the EDF, computes all metrics, and writes:</span>
+<span class="cm">#   concord-demo/demo_data.js  (~10 MB)</span></code></pre>
+
+<p>
+  The script uses the same Python functions as the server (concord-io, concord-viz,
+  concord-metrics-*), so the demo always reflects the current state of the pipeline.
+</p>
+
+<h2>Deployment</h2>
+
+<p>
+  The demo directory is deployed as a static site. All files are served directly — no build step.
+  The <code>CNAME</code> file configures the custom domain for GitHub Pages.
+  The <code>docs/</code> subdirectory within concord-demo contains this documentation site.
+</p>
+
+</article>
+</main>
+</body>
+</html>

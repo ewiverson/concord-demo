@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Frontend (JS) — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Packages<span class="sep">›</span> Frontend</div>
+<h1>Frontend (JavaScript)</h1>
+<p class="subtitle">Browser-side dashboard: ES modules, Plotly, panel system, 3D brain visualization</p>
+
+<div class="callout callout-note">
+  <strong>New to ES modules?</strong>
+  The frontend uses modern JavaScript module syntax (<code>import</code>/<code>export</code>).
+  See <a href="../background/es-modules.html">JS ES Modules</a> for a primer.
+</div>
+
+<h2>File Overview</h2>
+
+<table class="data-table">
+  <thead><tr><th>File</th><th>Role</th></tr></thead>
+  <tbody>
+    <tr><td>index.html</td><td>HTML shell: layout divs, topbar, sidebar, modal skeletons</td></tr>
+    <tr><td>style.css</td><td>Dark theme styling for all UI components</td></tr>
+    <tr><td>app.js</td><td>Main controller: state, load, sidebar, montage, zoom/pan coordination</td></tr>
+    <tr><td>panels.js</td><td>Panel registry and layout system</td></tr>
+    <tr><td>timeseries.js</td><td>Multi-channel strip chart rendering (Plotly)</td></tr>
+    <tr><td>spectral.js</td><td>PSD overlay and spectrogram heatmap (Plotly)</td></tr>
+    <tr><td>metrics.js</td><td>Metric heatmaps: line length, Hjorth, band power (Plotly)</td></tr>
+    <tr><td>brain.js</td><td>3D brain scatter plot with animated metric coloring (Plotly)</td></tr>
+    <tr><td>browser.js</td><td>BIDS dataset navigator and folder picker dialog</td></tr>
+  </tbody>
+</table>
+
+<h2>Module Dependency Graph</h2>
+
+<pre class="mermaid">
+graph TD
+  HTML["index.html"]
+  APP["app.js\nMain entry point — imports everything"]
+  PANELS["panels.js\nPanel registry, layout"]
+  TS["timeseries.js\nPure render"]
+  SP["spectral.js\nPure render"]
+  MT["metrics.js\nPure render"]
+  BR["brain.js\nSelf-contained:\nfetches + renders"]
+  BW["browser.js\nBIDS navigator +\nfolder picker"]
+
+  HTML --> APP
+  APP --> PANELS & TS & SP & MT & BR & BW
+</pre>
+
+<p>
+  The render modules (<code>timeseries.js</code>, <code>spectral.js</code>, <code>metrics.js</code>) are
+  <strong>pure</strong>: they take data and a DOM element, produce a Plotly chart, and have no side effects.
+  They do not hold any application state — that lives only in <code>app.js</code>.
+</p>
+
+<h2>app.js — Main Controller</h2>
+
+<h3>Application state object</h3>
+<pre><code><span class="kw">const</span> state = {
+  info:        null,    <span class="cm">// response from /api/load: channels, fs, duration, etc.</span>
+  channels:    [],      <span class="cm">// currently selected channels (subset of info.channels)</span>
+  montage:     <span class="st">"monopolar"</span>,
+  notchMode:   <span class="st">"none"</span>,
+  viewRange:   null,    <span class="cm">// [t_start, t_end] for current zoom window, or null = full</span>
+  activeMetric: null,   <span class="cm">// for metric panels</span>
+};
+</code></pre>
+
+<h3>apiFetch</h3>
+<pre><code><span class="kw">async function</span> <span class="nm">apiFetch</span>(url, options = {}) {
+  <span class="kw">const</span> res = <span class="kw">await</span> fetch(url, options);
+  <span class="kw">if</span> (!res.ok) <span class="kw">throw new</span> Error(<span class="kw">await</span> res.text());
+  <span class="kw">return</span> res.json();
+}
+</code></pre>
+<p>All server calls go through <code>apiFetch</code>. If the server returns an error status, it throws with the error message so it can be shown to the user.</p>
+
+<h3>Load sequence</h3>
+<ol>
+  <li>User types path and presses Load</li>
+  <li><code>apiFetch("POST /api/load", {path})</code> — stores result in <code>state.info</code></li>
+  <li><code>buildSidebar(state.info)</code> — renders channel list grouped by electrode prefix</li>
+  <li><code>applyLayout(currentGrid)</code> — triggers all panel render functions</li>
+</ol>
+
+<h3>Sidebar</h3>
+<p>Channels are grouped by electrode prefix — the alphabetic part of names like "SEEG1" → prefix "SEEG". The regex <code>/^(.+?)\d+$/</code> extracts the prefix.</p>
+<p>Status indicators (colored dots) are derived from <code>channel_metadata.status</code> and <code>channel_metadata.status_description</code>:</p>
+<table class="data-table">
+  <thead><tr><th>Status</th><th>Color</th></tr></thead>
+  <tbody>
+    <tr><td>good</td><td>Green</td></tr>
+    <tr><td>bad</td><td>Red</td></tr>
+    <tr><td>soz (seizure onset zone)</td><td>Orange</td></tr>
+    <tr><td>resected</td><td>Purple</td></tr>
+    <tr><td>unknown / missing</td><td>Gray</td></tr>
+  </tbody>
+</table>
+
+<h3>Filter buttons</h3>
+<p>Three filter modes change which channels are in <code>state.channels</code>, then re-render time series and PSD:</p>
+<ul>
+  <li><strong>All</strong> — all channels</li>
+  <li><strong>SOZ</strong> — only channels with status_description = "soz"</li>
+  <li><strong>Good</strong> — only channels with status = "good"</li>
+</ul>
+
+<h3>Montage switching</h3>
+<pre><code><span class="kw">async function</span> <span class="nm">switchMontage</span>(montage) {
+  <span class="kw">const</span> result = <span class="kw">await</span> apiFetch(<span class="st">"/api/montage"</span>, {
+    method: <span class="st">"POST"</span>,
+    headers: {<span class="st">"Content-Type"</span>: <span class="st">"application/json"</span>},
+    body: JSON.stringify({ montage }),
+  });
+  state.info.channels = result.channels;
+  state.info.channel_metadata = result.channel_metadata;
+  state.montage = montage;
+  buildSidebar(state.info);   <span class="cm">// channel names change in bipolar</span>
+  rerenderAll();
+}
+</code></pre>
+
+<h3>Zoom/pan coordination</h3>
+<p>
+  The time series panel registers a Plotly zoom/pan listener via <code>onZoomPan(div, callback)</code>
+  (from <code>timeseries.js</code>). When the user zooms, the callback fires with the new <code>[t_start, t_end]</code>,
+  which is stored in <code>state.viewRange</code> and a new <code>/api/timeseries</code> request is made for
+  just that window — providing dynamic level-of-detail.
+</p>
+
+<h2>panels.js — Layout System</h2>
+
+<p>
+  The dashboard uses a configurable grid of panels. Each panel type has a registered render function.
+  The layout is stored in <code>localStorage</code> so it persists between sessions.
+</p>
+
+<h3>Panel types</h3>
+<table class="data-table">
+  <thead><tr><th>Panel ID</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>timeseries</td><td>Multi-channel scrollable strip chart</td></tr>
+    <tr><td>psd</td><td>Overlay PSD curves for selected channels</td></tr>
+    <tr><td>spectrogram</td><td>STFT spectrogram for a single channel</td></tr>
+    <tr><td>line_length</td><td>Heatmap: channels × time windows</td></tr>
+    <tr><td>hjorth</td><td>Heatmap: channels × time windows (one Hjorth param)</td></tr>
+    <tr><td>band_power</td><td>Heatmap: channels × frequency bands</td></tr>
+    <tr><td>brain3d</td><td>3D scatter plot of electrodes colored by metric</td></tr>
+    <tr><td>empty</td><td>Placeholder (gray box)</td></tr>
+  </tbody>
+</table>
+
+<h3>Layout presets</h3>
+<table class="data-table">
+  <thead><tr><th>Preset</th><th>Grid</th><th>Best for</th></tr></thead>
+  <tbody>
+    <tr><td>clinical</td><td>Timeseries (large) + PSD + Events</td><td>Standard clinical review</td></tr>
+    <tr><td>seizure_onset</td><td>Timeseries + spectrogram + line length + brain</td><td>Seizure onset zone analysis</td></tr>
+    <tr><td>spectral</td><td>PSD + spectrogram + band power</td><td>Frequency analysis</td></tr>
+  </tbody>
+</table>
+
+<h3>Key functions</h3>
+
+<table class="data-table">
+  <thead><tr><th>Function</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>registerPanel(id, fn)</td><td>Register a render function for a panel type. <code>fn</code> receives a div element and is called when the panel needs to render.</td></tr>
+    <tr><td>applyLayout(grid)</td><td>Rebuild the <code>#main</code> CSS grid with given panel arrangement, then call each registered render function.</td></tr>
+    <tr><td>rerenderAll()</td><td>Re-call all panel render functions without rebuilding DOM. Used after montage/notch changes.</td></tr>
+    <tr><td>saveLayout(grid)</td><td>Save grid to localStorage as JSON.</td></tr>
+    <tr><td>loadLayout()</td><td>Load grid from localStorage, or return default preset.</td></tr>
+  </tbody>
+</table>
+
+<h2>timeseries.js</h2>
+
+<table class="data-table">
+  <thead><tr><th>Export</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>CHANNEL_COLORS</td><td>Array of 10 hex colors for cycling through channels.</td></tr>
+    <tr><td>computeOffset(values)</td><td>Computes per-channel vertical offset for the strip chart. Based on median RMS so channels don't overlap.</td></tr>
+    <tr><td>buildTimeseriesTraces(data, offsetOverride)</td><td>Builds an array of Plotly <code>Scatter</code> traces, one per channel, with vertical offsets applied.</td></tr>
+    <tr><td>renderTimeSeries(div, data, shapes, offsetOverride, xRange)</td><td>Calls <code>Plotly.react(div, traces, layout)</code>. Uses <code>Plotly.react</code> (not <code>.newPlot</code>) for efficient updates.</td></tr>
+    <tr><td>onZoomPan(div, callback)</td><td>Attaches a Plotly <code>plotly_relayout</code> event listener. Fires callback with new <code>[xmin, xmax]</code> when user zooms/pans. Debounced to avoid excessive API calls.</td></tr>
+  </tbody>
+</table>
+
+<h2>spectral.js</h2>
+
+<table class="data-table">
+  <thead><tr><th>Export</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>renderPSD(div, data)</td><td>Overlay PSD curves for all channels. Y-axis in log scale (dB). One colored line per channel.</td></tr>
+    <tr><td>renderSpectrogram(div, data, channelName)</td><td>Renders a 2D heatmap (time × frequency) using Plotly Heatmap with Viridis colorscale. Power in dB.</td></tr>
+  </tbody>
+</table>
+
+<h2>metrics.js</h2>
+
+<table class="data-table">
+  <thead><tr><th>Export</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>renderLineLength(div, data)</td><td>Heatmap: channels on y-axis, time windows on x-axis, line length value as color.</td></tr>
+    <tr><td>renderHjorth(div, data, paramIdx)</td><td>Heatmap for one Hjorth parameter (0=activity, 1=mobility, 2=complexity).</td></tr>
+    <tr><td>renderBandPower(div, data)</td><td>Heatmap: channels on y-axis, frequency bands on x-axis, power as color.</td></tr>
+  </tbody>
+</table>
+
+<h2>brain.js — 3D Brain Visualization</h2>
+
+<p>
+  Renders a 3D scatter plot of electrode contacts positioned in MNI space,
+  with each contact colored by a metric value that animates over time.
+</p>
+
+<h3>Two-resolution strategy</h3>
+<table class="data-table">
+  <thead><tr><th>Mode</th><th>window_s</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td>Scrub</td><td>1.0s</td><td>Fast load; allows timeline scrubbing with immediate feedback</td></tr>
+    <tr><td>Play</td><td>0.25s</td><td>High-resolution animation at 4 frames/second when play button pressed</td></tr>
+  </tbody>
+</table>
+
+<h3>Metric options (BRAIN_METRICS)</h3>
+<ul>
+  <li>line_length</li>
+  <li>hjorth_activity (component 0)</li>
+  <li>hjorth_mobility (component 1)</li>
+  <li>band_power: gamma (index 4)</li>
+  <li>band_power: high_gamma (index 5)</li>
+  <li>band_power: beta (index 3)</li>
+</ul>
+
+<h3>Key internal functions</h3>
+<table class="data-table">
+  <thead><tr><th>Function</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>_colorRange(metricData)</td><td>Computes global [cmin, cmax] across all channels and time windows. Used for consistent colorscale throughout animation.</td></tr>
+    <tr><td>_colorsAtTime(metricData, timeIdx, channels)</td><td>Extracts per-channel scalar at a specific time index for coloring the 3D scatter markers.</td></tr>
+    <tr><td>_render(div, positions, colors, cmin, cmax)</td><td>Calls <code>Plotly.react()</code> with a <code>scatter3d</code> trace. Marker size encodes SOZ status (SOZ contacts rendered larger).</td></tr>
+  </tbody>
+</table>
+
+<h2>Styling (style.css)</h2>
+
+<p>Dark theme. Key design choices:</p>
+<ul>
+  <li><strong>Paper color:</strong> <code>#1a1d27</code> — dark blue-gray</li>
+  <li><strong>Plot background:</strong> <code>#0f1117</code> — near-black</li>
+  <li><strong>Sidebar:</strong> collapsible, groups channels by electrode with status dots</li>
+  <li><strong>Grid:</strong> CSS Grid layout, configurable columns/rows per preset</li>
+  <li><strong>Modals:</strong> file browser and layout editor use the same dark overlay style</li>
+</ul>
+
+</article>
+</main>
+</body>
+</html>

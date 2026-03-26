@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>concord-server — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Packages<span class="sep">›</span> Server</div>
+<h1>concord-server</h1>
+<p class="subtitle">FastAPI backend + browser-based interactive dashboard</p>
+
+<div class="callout callout-key">
+  <strong>Role in the system</strong>
+  The server is the user-facing layer. It holds session state (the currently loaded Recording),
+  exposes an HTTP API that the browser calls, and serves the static frontend files.
+  All the real computation happens in the packages below — the server just orchestrates them.
+</div>
+
+<div class="callout callout-note">
+  <strong>New to REST APIs?</strong>
+  If terms like GET, POST, and JSON are unfamiliar, read
+  <a href="../background/rest-api.html">REST API &amp; HTTP</a> first.
+  For how FastAPI works, see <a href="../background/fastapi.html">FastAPI Framework</a>.
+</div>
+
+<h2>Package Structure</h2>
+<pre><code>concord-server/
+  src/concord_server/
+    server.py               FastAPI app, mounts routers, serves static files
+    state.py                AppState dataclass + helper functions
+    routes/
+      recording.py          /api/load, /api/montage, /api/browse, /api/events
+      signal.py             /api/timeseries, /api/psd, /api/spectrogram
+      metrics.py            /api/metric/*, /api/electrode_positions, /api/brain_timeseries
+      notch.py              /api/notch
+      bids.py               /api/bids/*, /api/browse_dirs
+    static/
+      index.html            Dashboard HTML shell
+      app.js, panels.js, timeseries.js, spectral.js, metrics.js, brain.js, browser.js
+      style.css</code></pre>
+
+<h2>state.py — Session State</h2>
+
+<p>
+  The server uses a single global <code>AppState</code> object to track what the user has loaded.
+  This is a simple in-memory store — no database, no file system.
+</p>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method cls">dataclass</span><span class="api-path">AppState</span></div>
+  <div class="api-body">
+    <table>
+      <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>recording</td><td>Recording | None</td><td>Currently active recording (montaged + filtered). What all API routes serve from.</td></tr>
+        <tr><td>raw_recording</td><td>Recording | None</td><td>Original monopolar data from EDF. Never touched after load — used to rebuild when user changes montage or notch.</td></tr>
+        <tr><td>path</td><td>str</td><td>Path of the currently loaded EDF file.</td></tr>
+        <tr><td>notch_mode</td><td>str</td><td>"none" | "notch50" | "notch60"</td></tr>
+        <tr><td>montage_mode</td><td>str</td><td>"monopolar" | "bipolar" | "car"</td></tr>
+        <tr><td>dataset_root</td><td>str</td><td>Root directory for BIDS dataset browsing. Set via CLI <code>--data-root</code>, <code>CONCORD_DATA_ROOT</code> env var, or the folder picker.</td></tr>
+        <tr><td>dataset_path</td><td>str</td><td>Path to the currently selected BIDS dataset directory.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h3>State functions</h3>
+
+<table class="data-table">
+  <thead><tr><th>Function</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>get_state() → AppState</td><td>Returns the singleton state object. Routes call this to read/modify state.</td></tr>
+    <tr><td>set_recording(recording, path)</td><td>Called after successful load. Sets both raw_recording and recording to the freshly loaded data, resets montage/notch to defaults.</td></tr>
+    <tr><td>clear()</td><td>Resets all state fields to None/defaults.</td></tr>
+    <tr><td>require_recording() → Recording</td><td>Returns recording if loaded, raises HTTP 400 if not. Used by all routes that need data.</td></tr>
+  </tbody>
+</table>
+
+<h3>The rebuild pattern</h3>
+
+<p>
+  When the user changes montage or notch, the server doesn't modify the existing recording.
+  Instead, it rebuilds from scratch using <code>_rebuild_recording(state)</code>:
+</p>
+
+<pre><code><span class="kw">def</span> <span class="nm">_rebuild_recording</span>(s: AppState) -> None:
+    <span class="cm"># Step 1: Apply montage to raw data</span>
+    <span class="kw">if</span> s.montage_mode == <span class="st">"bipolar"</span>:
+        rec = to_bipolar(s.raw_recording)
+    <span class="kw">elif</span> s.montage_mode == <span class="st">"car"</span>:
+        rec = to_car(s.raw_recording)
+    <span class="kw">else</span>:
+        rec = s.raw_recording
+
+    <span class="cm"># Step 2: Apply notch filter</span>
+    <span class="kw">if</span> s.notch_mode <span class="kw">in</span> (<span class="st">"notch50"</span>, <span class="st">"notch60"</span>):
+        freq = <span class="nb">50.0</span> <span class="kw">if</span> s.notch_mode == <span class="st">"notch50"</span> <span class="kw">else</span> <span class="nb">60.0</span>
+        <span class="kw">for</span> harmonic <span class="kw">in</span> [freq, <span class="nb">2.0</span> * freq]:
+            filtered = notch(filtered, rec.fs, freq=harmonic)
+
+    s.recording = rec   <span class="cm"># store new result</span></code></pre>
+
+<h2>API Routes</h2>
+
+<h3>Recording Routes — routes/recording.py</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method post">POST</span><span class="api-path">/api/load</span></div>
+  <div class="api-body">
+    <p><strong>Body:</strong> <code>{"path": "/absolute/path/to/file.edf"}</code></p>
+    <p>Loads a BIDS iEEG EDF file. Calls <code>read_bids_ieeg()</code>, stores in state.</p>
+    <p><strong>Returns:</strong></p>
+    <pre><code>{
+  "path": "...",
+  "channels": ["SEEG1", ...],
+  "n_channels": 72,
+  "fs": 1024.0,
+  "duration": 300.0,
+  "montage": "monopolar",
+  "channel_metadata": {
+    "SEEG1": {"status": "good", "status_description": "soz", "x": 12.3, "y": -4.1, "z": 8.5}
+  },
+  "events": [{"onset": 45.2, "duration": 60.0, "label": "seizure"}]
+}</code></pre>
+    <p><strong>Errors:</strong> 404 if file not found, 422 if file cannot be parsed.</p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method post">POST</span><span class="api-path">/api/montage</span></div>
+  <div class="api-body">
+    <p><strong>Body:</strong> <code>{"montage": "bipolar"}</code> (or "monopolar" | "car")</p>
+    <p>Changes the active montage. Triggers rebuild from raw_recording.</p>
+    <p><strong>Returns:</strong> <code>{"montage": "bipolar", "channels": [...], "channel_metadata": {...}}</code></p>
+    <p>Note: bipolar channel names change (e.g. "SEEG1-SEEG2"), so the frontend rebuilds the sidebar.</p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/browse?path=/home/user/data</span></div>
+  <div class="api-body">
+    <p>Returns a directory listing for the file browser dialog.</p>
+    <p><strong>Returns:</strong> <code>{"path": "...", "parent": "...", "entries": [{"name": "file.edf", "is_dir": false, "size": 123456}, ...]}</code></p>
+    <p>Hidden files (starting with ".") are excluded.</p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/events</span></div>
+  <div class="api-body">
+    <p>Returns the event annotations for the current recording.</p>
+    <p><strong>Returns:</strong> <code>{"events": [{"onset": 45.2, "duration": 60.0, "label": "seizure"}, ...]}</code></p>
+  </div>
+</div>
+
+<h3>Signal Routes — routes/signal.py</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/timeseries?t_start=0&amp;t_end=10&amp;channels=SEEG1,SEEG2</span></div>
+  <div class="api-body">
+    <p>Returns downsampled time series data for rendering. Calls <code>get_timeseries()</code> from concord-viz.</p>
+    <table>
+      <thead><tr><th>Query param</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>t_start</td><td>Start time in seconds (optional)</td></tr>
+        <tr><td>t_end</td><td>End time in seconds (optional)</td></tr>
+        <tr><td>channels</td><td>Comma-separated channel names (optional, defaults to all)</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Returns:</strong> <code>{"channels": [...], "times": [...], "values": [[...], ...], "events": [...]}</code></p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/psd?channels=SEEG1,SEEG2</span></div>
+  <div class="api-body">
+    <p>Returns Welch PSD for selected channels. Calls <code>get_psd()</code>.</p>
+    <p><strong>Returns:</strong> <code>{"channels": [...], "freqs": [...], "power": [[...], ...]}</code></p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/spectrogram?channel=SEEG1</span></div>
+  <div class="api-body">
+    <p>Returns STFT spectrogram for a single channel. Calls <code>get_spectrogram()</code>.</p>
+    <p><strong>Returns:</strong> <code>{"times": [...], "freqs": [...], "power": [[...], ...]}</code> (power in dB)</p>
+  </div>
+</div>
+
+<h3>Metric Routes — routes/metrics.py</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/metric/line_length?window_s=1.0</span></div>
+  <div class="api-body"><p>Returns windowed line length for all channels.</p></div>
+</div>
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/metric/hjorth?window_s=1.0</span></div>
+  <div class="api-body"><p>Returns windowed Hjorth parameters (activity, mobility, complexity) for all channels.</p></div>
+</div>
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/metric/band_power?window_s=4.0</span></div>
+  <div class="api-body"><p>Returns band power per channel across 6 frequency bands.</p></div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/electrode_positions</span></div>
+  <div class="api-body">
+    <p>Returns MNI coordinates for all channels that have them.</p>
+    <p><strong>Returns:</strong> <code>{"channels": [{"name": "SEEG1", "x": 12.3, "y": -4.1, "z": 8.5, "status": "good", "status_description": "soz"}, ...]}</code></p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/brain_timeseries?metric=line_length&amp;component=0&amp;window_s=1.0</span></div>
+  <div class="api-body">
+    <p>Returns a scalar value per channel per time window for animating the 3D brain visualization.</p>
+    <p><strong>Returns:</strong> <code>{"channels": [...], "times": [...], "values": [[ch1_win1, ch1_win2, ...], ...]}</code></p>
+    <p><code>component</code> selects which Hjorth parameter (0=activity, 1=mobility, 2=complexity) or band power index to extract.</p>
+  </div>
+</div>
+
+<h3>Notch Route — routes/notch.py</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method post">POST</span><span class="api-path">/api/notch</span></div>
+  <div class="api-body">
+    <p><strong>Body:</strong> <code>{"mode": "notch60"}</code> (or "none" | "notch50")</p>
+    <p>Changes the active notch filter. Triggers rebuild from raw_recording with new filter applied.</p>
+    <p><strong>Returns:</strong> <code>{"mode": "notch60"}</code></p>
+  </div>
+</div>
+
+<h3>BIDS Routes — routes/bids.py</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/browse_dirs?path=/home/user</span></div>
+  <div class="api-body">
+    <p>Lists subdirectories of a path for the folder-picker dialog. If no path is given, uses the current <code>dataset_root</code> or falls back to the home directory.</p>
+    <p><strong>Returns:</strong> <code>{"path": "...", "parent": "...", "dirs": ["subdir1", "subdir2", ...]}</code></p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/bids/datasets?root=/path/to/datasets</span></div>
+  <div class="api-body">
+    <p>Scans a directory for BIDS datasets (subdirectories containing <code>dataset_description.json</code>). Sets <code>dataset_root</code> on the server state.</p>
+    <p><strong>Returns:</strong> <code>{"root": "...", "datasets": [{"dataset_id": "ds004100", "name": "HUP iEEG", "path": "...", "bids_version": "1.7.0", "n_subjects": 56}, ...]}</code></p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/bids/subjects?dataset=/path/to/ds004100</span></div>
+  <div class="api-body">
+    <p>Lists subjects in a BIDS dataset. Parses <code>participants.tsv</code> and <code>participants.json</code> (field descriptions). Tags each subject with download status.</p>
+    <p><strong>Returns:</strong> <code>{"dataset": "...", "fields": {...}, "subjects": [{"participant_id": "sub-HUP117", "age": "35", "sex": "M", "downloaded": true}, ...]}</code></p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/bids/sessions?dataset=...&amp;subject=sub-HUP117</span></div>
+  <div class="api-body">
+    <p>Lists sessions for a subject. Detects available modalities per session.</p>
+    <p><strong>Returns:</strong> <code>{"sessions": [{"session_id": "ses-presurgery", "path": "...", "modalities": ["ieeg"]}, ...]}</code></p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/bids/recordings?dataset=...&amp;subject=sub-HUP117&amp;session=ses-presurgery</span></div>
+  <div class="api-body">
+    <p>Lists recording files within a subject/session. Discovers recordings from both data files and JSON sidecars (marking undownloaded files as <code>downloaded: false</code>).</p>
+    <p><strong>Returns:</strong> <code>{"recordings": [{"filename": "..._ieeg.edf", "path": "...", "task": "ictal", "run": "01", "modality": "ieeg", "has_events": true, "has_channels": true, "downloaded": true}, ...]}</code></p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method get">GET</span><span class="api-path">/api/bids/download?dataset=...&amp;dataset_id=ds004100&amp;subject=sub-HUP117</span></div>
+  <div class="api-body">
+    <p>Streams download progress via Server-Sent Events (SSE). Uses the <code>openneuro</code> Python package to download data files for a single subject.</p>
+    <p><strong>Events:</strong></p>
+    <ul>
+      <li><code>event: progress</code> — <code>{"line": "Downloading sub-HUP117..."}</code></li>
+      <li><code>event: done</code> — <code>{"success": true, "subject": "sub-HUP117"}</code></li>
+      <li><code>event: error</code> — <code>{"message": "..."}</code></li>
+    </ul>
+  </div>
+</div>
+
+<h2>server.py — App Assembly</h2>
+
+<pre><code><span class="kw">from</span> fastapi <span class="kw">import</span> FastAPI
+<span class="kw">from</span> fastapi.staticfiles <span class="kw">import</span> StaticFiles
+
+app = FastAPI()
+
+<span class="cm"># Register all route modules</span>
+app.include_router(recording.router)
+app.include_router(signal.router)
+app.include_router(metrics.router)
+app.include_router(notch.router)
+app.include_router(bids.router)
+
+<span class="cm"># Serve frontend from static/</span>
+app.mount(<span class="st">"/"</span>, StaticFiles(directory=static_dir, html=<span class="nb">True</span>), name=<span class="st">"static"</span>)
+
+<span class="cm"># Convenience shutdown for development</span>
+@app.post(<span class="st">"/api/shutdown"</span>)
+<span class="kw">def</span> <span class="nm">shutdown</span>(): os.kill(os.getpid(), signal.SIGTERM)</code></pre>
+
+<h2>Running the Server</h2>
+
+<pre><code><span class="cm"># From repo root:</span>
+conda activate concord
+python -m concord_server.server
+
+<span class="cm"># Or:</span>
+python serve.py
+
+<span class="cm"># Server starts on http://localhost:8000</span>
+<span class="cm"># Ctrl+C or browser button to stop</span></code></pre>
+
+</article>
+</main>
+</body>
+</html>

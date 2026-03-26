@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Flow — Montage Concord</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<nav><script src="nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="index.html">Home</a><span class="sep">›</span> Data Flow</div>
+<h1>Data Flow</h1>
+<p class="subtitle">Tracing a single EDF file from disk to interactive visualization</p>
+
+<p>
+  This page walks through the complete journey of SEEG data through Montage Concord,
+  from a raw EDF file all the way to the browser dashboard. Each step corresponds
+  to a specific package and function call.
+</p>
+
+<h2>The Complete Pipeline</h2>
+
+<div class="flow">
+  <div class="flow-step">
+    <div class="flow-number">1</div>
+    <div class="flow-node">
+      <div class="flow-title">EDF file on disk</div>
+      <div class="flow-detail">Binary file in European Data Format. Contains raw voltage samples (µV), sampling rate, channel names, and optionally embedded annotations. For BIDS datasets, additional <code>.tsv</code> and <code>.json</code> sidecar files live alongside it.</div>
+    </div>
+  </div>
+  <div class="flow-arrow">↓</div>
+  <div class="flow-step">
+    <div class="flow-number">2</div>
+    <div class="flow-node">
+      <div class="flow-title">read_bids_ieeg() → Recording  <span style="font-size:0.8rem;color:var(--text-muted)">[concord-io]</span></div>
+      <div class="flow-detail">
+        MNE reads the EDF; data is converted to Volts (SI). BIDS sidecar files are parsed:
+        <code>_channels.tsv</code> → status/annotations per channel,
+        <code>_electrodes.tsv</code> → MNI x/y/z coordinates,
+        <code>_events.tsv</code> → seizure onset times,
+        <code>participants.tsv</code> → subject demographics.
+        All of this is packed into a <strong>Recording</strong> object.
+      </div>
+    </div>
+  </div>
+  <div class="flow-arrow">↓</div>
+  <div class="flow-step">
+    <div class="flow-number">3</div>
+    <div class="flow-node">
+      <div class="flow-title">to_bipolar() / to_car() → Recording  <span style="font-size:0.8rem;color:var(--text-muted)">[concord-io]</span></div>
+      <div class="flow-detail">
+        Optionally re-reference the data. <strong>Bipolar</strong>: subtract adjacent contacts on the same electrode shaft (e.g. SEEG1 − SEEG2), which cancels common-mode noise and localizes activity. <strong>CAR</strong>: subtract the mean of all channels. Returns a <em>new</em> Recording — the original is never modified.
+      </div>
+    </div>
+  </div>
+  <div class="flow-arrow">↓</div>
+  <div class="flow-step">
+    <div class="flow-number">4</div>
+    <div class="flow-node">
+      <div class="flow-title">Metric.compute(recording) → MetricResult  <span style="font-size:0.8rem;color:var(--text-muted)">[metrics packages]</span></div>
+      <div class="flow-detail">
+        Metric classes (e.g. <code>WelchPSD</code>, <code>LineLength</code>) take a Recording and produce a <strong>MetricResult</strong>.
+        The metrics-utils package provides shared primitives: <code>segment()</code> slices the signal into overlapping windows,
+        <code>bandpass()</code> / <code>notch()</code> filter the signal.
+        The result's <code>data</code> array can be 1D (per-channel scalar), 2D (channels × frequencies), etc.
+      </div>
+    </div>
+  </div>
+  <div class="flow-arrow">↓</div>
+  <div class="flow-step">
+    <div class="flow-number">5</div>
+    <div class="flow-node">
+      <div class="flow-title">get_timeseries() / get_psd() / get_metric() → dict  <span style="font-size:0.8rem;color:var(--text-muted)">[concord-viz]</span></div>
+      <div class="flow-detail">
+        Visualization helper functions convert Recording/MetricResult into plain Python dicts
+        (lists of numbers, channel names, axis labels) that are safe to serialize as JSON.
+        Large arrays are downsampled with LTTB (Largest Triangle Three Buckets) to keep
+        browser transfer fast without losing visual fidelity.
+      </div>
+    </div>
+  </div>
+  <div class="flow-arrow">↓</div>
+  <div class="flow-step">
+    <div class="flow-number">6</div>
+    <div class="flow-node">
+      <div class="flow-title">FastAPI route → JSON response  <span style="font-size:0.8rem;color:var(--text-muted)">[concord-server]</span></div>
+      <div class="flow-detail">
+        The server holds a single <code>AppState</code> in memory: the current <code>Recording</code> plus user preferences (montage, notch mode).
+        When the browser requests <code>GET /api/timeseries</code>, the route calls the viz function and
+        returns the dict as a JSON HTTP response. No files are written.
+      </div>
+    </div>
+  </div>
+  <div class="flow-arrow">↓</div>
+  <div class="flow-step">
+    <div class="flow-number">7</div>
+    <div class="flow-node">
+      <div class="flow-title">Plotly.react() → interactive chart  <span style="font-size:0.8rem;color:var(--text-muted)">[frontend JS]</span></div>
+      <div class="flow-detail">
+        The browser's JavaScript fetches JSON from the API, constructs Plotly trace objects,
+        and renders them into <code>&lt;div&gt;</code> elements. Multiple panels can be shown simultaneously
+        (time series, spectrogram, PSD, metric heatmaps, 3D brain). Zoom/pan events trigger
+        new API requests for the visible time window.
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>What Happens When You Click "Load"</h2>
+
+<p>Concretely, here is the sequence when you type a file path and press Load in the browser:</p>
+
+<pre><code><span class="cm"># 1. Browser sends HTTP POST with JSON body</span>
+POST /api/load
+{"path": "/data/sub-HUP117/ieeg/sub-HUP117_run-01_ieeg.edf"}
+
+<span class="cm"># 2. Server reads the file</span>
+recording = read_bids_ieeg(path)          <span class="cm"># → Recording</span>
+set_recording(recording, path)            <span class="cm"># stores in AppState</span>
+
+<span class="cm"># 3. Server responds with metadata</span>
+{
+  "channels": ["SEEG1", "SEEG2", ...],
+  "n_channels": 72,
+  "fs": 1024.0,
+  "duration": 300.0,
+  "montage": "monopolar",
+  "channel_metadata": {"SEEG1": {"status": "good", "x": 12.3, ...}},
+  "events": [{"onset": 45.2, "duration": 60.0, "label": "seizure"}]
+}
+
+<span class="cm"># 4. Browser rebuilds sidebar, then requests time series</span>
+GET /api/timeseries?t_start=0&amp;t_end=10&amp;channels=SEEG1,SEEG2,...
+
+<span class="cm"># 5. Server calls viz</span>
+result = get_timeseries(recording, t_start=0, t_end=10, channels=[...])
+
+<span class="cm"># 6. Responds with JSON, browser renders Plotly chart</span></code></pre>
+
+<h2>State Management: raw vs. processed Recording</h2>
+
+<p>
+  The server keeps <em>two</em> Recording objects in state:
+</p>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Field</th><th>Contents</th><th>When updated</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>raw_recording</td>
+      <td>Original monopolar data from EDF, never touched after load</td>
+      <td>Only on POST /api/load</td>
+    </tr>
+    <tr>
+      <td>recording</td>
+      <td>Current view: montage + notch applied</td>
+      <td>On load, montage change, and notch change</td>
+    </tr>
+  </tbody>
+</table>
+
+<p>
+  When the user switches from monopolar to bipolar, the server calls <code>_rebuild_recording()</code>:
+  it takes <code>raw_recording</code>, applies the new montage, applies the current notch setting,
+  and stores the result as <code>recording</code>. All API routes then serve from this new <code>recording</code>.
+</p>
+
+<div class="callout callout-tip">
+  <strong>Why keep the raw?</strong>
+  If we only kept the processed recording, switching from bipolar back to monopolar would require
+  re-reading the EDF file. Instead, we always re-derive from the untouched original.
+  This is the "keep source of truth" immutability pattern.
+</div>
+
+<h2>Data Shapes Along the Pipeline</h2>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Stage</th><th>Shape / type</th><th>Example (72 ch, 5 min at 1024 Hz)</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>Recording.data</td><td>(n_channels, n_samples) float64</td><td>(72, 307200)</td></tr>
+    <tr><td>After bipolar</td><td>(n_pairs, n_samples) float64</td><td>(66, 307200)</td></tr>
+    <tr><td>WelchPSD output</td><td>(n_channels, n_freqs) float64</td><td>(72, 513)</td></tr>
+    <tr><td>LineLength output</td><td>(n_channels, n_windows) float64</td><td>(72, 300) @ 1s windows</td></tr>
+    <tr><td>BandPower output</td><td>(n_channels, n_bands) float64</td><td>(72, 6)</td></tr>
+    <tr><td>get_timeseries dict</td><td>lists (JSON-serializable)</td><td>72 channels × ≤2000 points</td></tr>
+    <tr><td>Plotly trace</td><td>{x: [], y: [], ...}</td><td>One trace per channel</td></tr>
+  </tbody>
+</table>
+
+<h2>The Notch Filter Chain</h2>
+
+<p>
+  Powerline interference is very common in iEEG. The server exposes three notch modes:
+</p>
+
+<table class="data-table">
+  <thead>
+    <tr><th>Mode</th><th>What it does</th><th>Best for</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>none</td><td>No filtering</td><td>Inspecting raw signal quality</td></tr>
+    <tr><td>notch50</td><td>Zero-phase IIR notch at 50 Hz + 100 Hz</td><td>European recordings</td></tr>
+    <tr><td>notch60</td><td>Zero-phase IIR notch at 60 Hz + 120 Hz</td><td>North American recordings</td></tr>
+  </tbody>
+</table>
+
+</article>
+</main>
+
+</body>
+</html>
