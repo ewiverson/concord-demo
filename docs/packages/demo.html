@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>concord-demo — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Packages<span class="sep">›</span> Demo</div>
+<h1>concord-demo</h1>
+<p class="subtitle">Standalone static demo — runs entirely in the browser with no server</p>
+
+<div class="callout callout-key">
+  <strong>Role in the system</strong>
+  The demo is the real concord-server frontend running on a static host (GitHub Pages) with a mock backend
+  in the browser. Visitors can browse a synthetic BIDS dataset, "download" a subject from the cloud, and open
+  recordings in the full viewer. There is no server and no patient data.
+</div>
+
+<h2>How It Works</h2>
+
+<p>
+  <code>concord-demo/build.py</code> copies <code>concord-server/.../static/</code> verbatim into the site, copies
+  the unmodified server <code>index.html</code>, and injects a few demo-only scripts just before the app's modules.
+  There is no demo-specific <code>index.html</code> or <code>app.js</code>, so the demo cannot drift from the server UI:
+  any change to the server frontend appears in the demo on the next deploy.
+</p>
+<p>
+  The injected scripts replace the backend. <code>demo_api.js</code> patches <code>window.fetch()</code> for
+  <code>/api/*</code> and answers from synthetic data; <code>demo_dataset.js</code> also replaces
+  <code>EventSource</code> for <code>/api/bids/download</code> to simulate the cloud download.
+</p>
+
+<h2>The Visitor Walkthrough</h2>
+<ol>
+  <li>The browser opens at <code>/demo/datasets</code> and lists the <em>Concord Demo Dataset</em> (6 synthetic subjects).</li>
+  <li>Subject Detail, sessions and recordings behave as on the server. DEMO01 starts as <span class="badge">local</span>; the others are <span class="badge">cloud</span>.</li>
+  <li>Clicking a cloud recording opens the download dialog. The simulated download streams progress lines, then the subject flips to <span class="badge">local</span> (remembered in <code>localStorage</code>).</li>
+  <li>Opening a local recording generates its signals (Wendling model, ~1&ndash;2 s) and opens the full viewer: time series, PSD, spectrogram, metrics, 3D brain, montages, notch filter, layouts.</li>
+  <li>Settings &rarr; Server explains there is no server to configure.</li>
+  <li>On a phone or tablet (a viewport under 900&nbsp;px wide, or a touch-only device) the demo shows a full-screen notice asking the visitor to open it in a desktop browser, with a copy-link button.</li>
+  <li>The footer says who built the demo and links to Montage Neuroscience; "About this demo" explains what the visitor is looking at, maps each thing to try onto the consulting service it demonstrates, and says which services are not shown.</li>
+</ol>
+
+<h2>File Structure</h2>
+
+<pre><code>concord-demo/
+  build.py            Builds the site (also: --serve PORT to preview locally)
+  demo_api.js         Mock concord-server API (fetch patch) for the currently open recording
+  demo_dataset.js     Virtual BIDS dataset, download state, simulated download (EventSource)
+  demo_signals.js     Synthetic SEEG generator (electrode layouts, Wendling regimes, pink noise)
+  demo_ui.js          Footer and "About this demo" dialog (the only UI additions)
+  synth.js, dsp.js    Wendling model port; Welch PSD, spectrogram, band power
+  CNAME               GitHub Pages custom domain
+  measure_amplitudes.js  Node script for tuning channel amplitudes</code></pre>
+
+<h2>Synthetic Data</h2>
+<ul>
+  <li>Each subject has an electrode layout (bilateral amygdala, left temporal, bilateral hippocampus), seizure-onset contacts and an onset time.</li>
+  <li>Recordings are 30 s at 500 Hz. Interictal runs are all background; ictal runs switch the seizure-onset contacts to a spike-wave regime at the onset time and add a seizure annotation.</li>
+  <li>Signals are deterministic (seeded per subject and run), so the same recording always looks the same.</li>
+</ul>
+
+<h2>Build and Preview</h2>
+
+<pre><code><span class="cm"># From the project root (stdlib only, no install needed):</span>
+python concord-demo/build.py --serve 8001   <span class="cm"># then open http://127.0.0.1:8001/</span></code></pre>
+
+<h2>Deployment</h2>
+
+<p>
+  <code>.github/workflows/deploy-demo.yml</code> runs on pushes to <code>main</code> that touch the server frontend,
+  <code>concord-demo/</code> or <code>docs/</code>. It builds the site and force-pushes it to the public
+  <code>ewiverson/concord-demo</code> repository (the main repo is private) using a write-enabled SSH deploy key
+  stored as the <code>DEMO_DEPLOY_KEY</code> secret. GitHub Pages serves that repo at the custom domain in <code>CNAME</code>
+  (<code>concord.montageneuroscience.com</code>). This documentation site ships under <code>/docs</code> of the same build.
+</p>
+
+</article>
+</main>
+</body>
+</html>

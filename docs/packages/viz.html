@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>concord-viz — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Packages<span class="sep">›</span> Visualization</div>
+<h1>concord-viz</h1>
+<p class="subtitle">Data preparation functions that convert Recordings and MetricResults into JSON-ready dicts for the browser</p>
+
+<div class="callout callout-key">
+  <strong>Role in the system</strong>
+  concord-viz is a pure transformation layer: it takes core containers and returns
+  plain Python dicts (lists of numbers, strings) that the server can serialize to JSON
+  and the browser's Plotly can render. It never modifies data, never writes files.
+</div>
+
+<h2>Package Structure</h2>
+<pre><code>concord-viz/
+  src/concord_viz/
+    __init__.py       exports all public functions
+    downsample.py     LTTB algorithm
+    timeseries.py     get_timeseries
+    spectral.py       get_psd, get_spectrogram
+    metrics.py        get_line_length, get_hjorth, get_band_power</code></pre>
+
+<h2>downsample.py — LTTB</h2>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">lttb(times, values, n_out) → (times_ds, values_ds)</span></div>
+  <div class="api-body">
+    <p>
+      <strong>Largest Triangle Three Buckets</strong> — a perceptually-optimal downsampling algorithm.
+      Reduces a time series from many thousands of points to a target <code>n_out</code> while
+      preserving the visual shape as faithfully as possible.
+    </p>
+    <p>
+      <strong>Why not just every-Nth-sample?</strong> Naive subsampling can miss sharp peaks and
+      flat regions equally. LTTB works in buckets, and within each bucket selects the point
+      that forms the largest triangle with its neighbors — preserving extrema that would
+      otherwise be missed.
+    </p>
+    <p>Returns downsampled <code>times_ds</code> and <code>values_ds</code> arrays of length <code>n_out</code>.</p>
+  </div>
+</div>
+
+<h2>timeseries.py</h2>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">get_timeseries(recording, t_start=None, t_end=None, channels=None, max_points=2000) → dict</span></div>
+  <div class="api-body">
+    <p>Extracts a time window from a Recording, optionally subsets channels, and downsamples to at most <code>max_points</code> using LTTB.</p>
+    <table>
+      <thead><tr><th>Parameter</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>t_start</td><td>Start time in seconds. None = beginning of recording.</td></tr>
+        <tr><td>t_end</td><td>End time in seconds. None = end of recording.</td></tr>
+        <tr><td>channels</td><td>List of channel names to include. None = all channels.</td></tr>
+        <tr><td>max_points</td><td>Maximum number of time points per channel after downsampling. Default 2000.</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Returns:</strong></p>
+    <pre><code>{
+  "channels": ["SEEG1", "SEEG2", ...],
+  "times":    [0.0, 0.0005, ...],   <span class="cm"># shared downsampled time axis</span>
+  "values":   [[...], [...], ...],  <span class="cm"># one list per channel</span>
+  "events":   [{"onset": 45.2, "duration": 60.0, "label": "seizure"}, ...]
+}</code></pre>
+    <p>
+      <strong>Shared time axis:</strong> LTTB is run on the first channel to determine which time points
+      to keep. The same indices are applied to all other channels, so all channels share one time array —
+      efficient for Plotly rendering.
+    </p>
+  </div>
+</div>
+
+<h2>spectral.py</h2>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">get_psd(recording, channels=None, window_s=4.0, fmin=1.0, fmax=150.0) → dict</span></div>
+  <div class="api-body">
+    <p>Computes Welch PSD for specified channels and returns JSON-ready dict.</p>
+    <p><strong>Returns:</strong></p>
+    <pre><code>{
+  "channels": ["SEEG1", ...],
+  "freqs":    [1.0, 1.25, 1.5, ...],   <span class="cm"># Hz</span>
+  "power":    [[...], [...], ...]        <span class="cm"># V^2/Hz, one list per channel</span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">get_spectrogram(recording, channel, window_s=1.0, fmin=1.0, fmax=150.0) → dict</span></div>
+  <div class="api-body">
+    <p>Computes a Short-Time Fourier Transform (STFT) spectrogram for a single channel using <code>scipy.signal.spectrogram</code>.</p>
+    <p><strong>Returns:</strong></p>
+    <pre><code>{
+  "times":  [0.5, 1.5, ...],   <span class="cm"># window center times in seconds</span>
+  "freqs":  [1.0, 2.0, ...],   <span class="cm"># Hz</span>
+  "power":  [[...], ...]        <span class="cm"># dB (10 * log10(V^2/Hz)), shape [n_freqs, n_times]</span>
+}</code></pre>
+    <p>Power is in dB (decibels) because the human visual system perceives power logarithmically — dB scale makes both subtle low-power features and large bursts visible simultaneously.</p>
+  </div>
+</div>
+
+<h2>metrics.py</h2>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">get_line_length(recording, window_s=1.0) → dict</span></div>
+  <div class="api-body">
+    <p>Runs <code>LineLength(window_s)</code> and converts the result.</p>
+    <pre><code>{
+  "channels": ["SEEG1", ...],
+  "times":    [0.5, 1.5, ...],  <span class="cm"># window center times</span>
+  "values":   [[...], ...]       <span class="cm"># (n_channels, n_windows)</span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">get_hjorth(recording, window_s=1.0) → dict</span></div>
+  <div class="api-body">
+    <p>Runs <code>HjorthParameters(window_s)</code> and converts the result.</p>
+    <pre><code>{
+  "channels": ["SEEG1", ...],
+  "times":    [0.5, 1.5, ...],
+  "params":   ["activity", "mobility", "complexity"],
+  "values":   [[[a,m,c], ...], ...]  <span class="cm"># (n_channels, n_windows, 3)</span>
+}</code></pre>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">get_band_power(recording, window_s=4.0) → dict</span></div>
+  <div class="api-body">
+    <p>Runs <code>BandPower(window_s)</code> and converts the result.</p>
+    <pre><code>{
+  "channels": ["SEEG1", ...],
+  "bands":    ["delta", "theta", "alpha", "beta", "gamma", "high_gamma"],
+  "values":   [[...], ...]   <span class="cm"># (n_channels, n_bands)</span>
+}</code></pre>
+  </div>
+</div>
+
+<h2>Design Notes</h2>
+
+<h3>Why separate viz from the server?</h3>
+<p>
+  The viz functions are pure Python (no HTTP, no state). This means you can use them
+  in a Jupyter notebook, a script, or any other context — not just the web server.
+  For example, to render a quick PSD plot in a notebook:
+</p>
+<pre><code><span class="kw">import</span> plotly.graph_objects <span class="kw">as</span> go
+<span class="kw">from</span> concord_viz <span class="kw">import</span> get_psd
+
+data = get_psd(recording, channels=[<span class="st">"SEEG1"</span>, <span class="st">"SEEG2"</span>])
+fig = go.Figure()
+<span class="kw">for</span> i, ch <span class="kw">in</span> enumerate(data[<span class="st">"channels"</span>]):
+    fig.add_trace(go.Scatter(x=data[<span class="st">"freqs"</span>], y=data[<span class="st">"power"</span>][i], name=ch))
+fig.show()</code></pre>
+
+<h3>Why return dicts instead of numpy arrays?</h3>
+<p>
+  JSON serialization requires plain Python lists. The viz layer does this conversion once,
+  centrally. The server just calls <code>json.dumps(result)</code> — no additional processing needed.
+</p>
+
+</article>
+</main>
+</body>
+</html>

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>concord-metrics-utils — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Packages<span class="sep">›</span> Metrics Utils</div>
+<h1>concord-metrics-utils</h1>
+<p class="subtitle">Shared signal processing primitives used by all metric packages</p>
+
+<div class="callout callout-key">
+  <strong>Role in the system</strong>
+  This package provides windowing, filtering, and related low-level operations.
+  It does <em>not</em> know about the Metric ABC or Recording containers.
+  All metric packages import from here instead of duplicating code.
+</div>
+
+<h2>Package Structure</h2>
+<pre><code>concord-metrics-utils/
+  src/concord_metrics_utils/
+    __init__.py     exports segment, window_times, bandpass, notch,
+                            harmonic_regression_notch
+    windows.py      sliding window segmentation
+    filters.py      bandpass, notch, and advanced powerline removal</code></pre>
+
+<h2>windows.py</h2>
+
+<h3>segment</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">segment(data, fs, window_s, step_s=None) → np.ndarray</span></div>
+  <div class="api-body">
+    <p>
+      Divides a signal array into overlapping windows using
+      <code>numpy.lib.stride_tricks.sliding_window_view</code>.
+      No data is copied during slicing (stride tricks share the underlying buffer);
+      the result is then made contiguous with <code>.copy()</code> so downstream code can write to it safely.
+    </p>
+    <table>
+      <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>data</td><td>np.ndarray</td><td>Input array. Can be any shape <code>(..., n_samples)</code>. The last axis is segmented.</td></tr>
+        <tr><td>fs</td><td>float</td><td>Sampling rate in Hz. Used to convert window/step from seconds to samples.</td></tr>
+        <tr><td>window_s</td><td>float</td><td>Window length in seconds.</td></tr>
+        <tr><td>step_s</td><td>float | None</td><td>Step between window starts in seconds. If None, defaults to <code>window_s</code> (non-overlapping).</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Returns:</strong> Array of shape <code>(..., n_windows, window_samples)</code>. The last axis of the input is replaced by two axes: windows and samples-per-window.</p>
+    <p><strong>Example:</strong> Input <code>(72, 307200)</code> at 1024 Hz with 1-second windows → output <code>(72, 300, 1024)</code>.</p>
+  </div>
+</div>
+
+<h3>window_times</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">window_times(n_samples, fs, window_s, step_s=None, start_time=0.0) → np.ndarray</span></div>
+  <div class="api-body">
+    <p>
+      Returns the center time (in seconds) of each window produced by <code>segment()</code>.
+      Use this to build the <code>time_axis</code> field of a MetricResult.
+    </p>
+    <p>Shape: <code>(n_windows,)</code>. Center time = start of window + window_length / 2.</p>
+  </div>
+</div>
+
+<h2>filters.py</h2>
+
+<h3>bandpass</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">bandpass(data, fs, l_freq, h_freq, order=4) → np.ndarray</span></div>
+  <div class="api-body">
+    <p>
+      Zero-phase Butterworth bandpass filter applied along the last axis.
+      Uses <code>scipy.signal.butter</code> to design the filter (second-order sections form),
+      then <code>sosfiltfilt</code> for forward-backward application — this cancels phase distortion,
+      so time events in the output align correctly with the input.
+    </p>
+    <table>
+      <thead><tr><th>Parameter</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>data</td><td>Array of any shape. Filter is applied along last axis.</td></tr>
+        <tr><td>fs</td><td>Sampling rate in Hz.</td></tr>
+        <tr><td>l_freq</td><td>Lower cutoff frequency in Hz.</td></tr>
+        <tr><td>h_freq</td><td>Upper cutoff frequency in Hz.</td></tr>
+        <tr><td>order</td><td>Filter order. Higher = sharper rolloff but more ringing. Default 4.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h3>notch</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">notch(data, fs, freq=60.0, quality=30.0) → np.ndarray</span></div>
+  <div class="api-body">
+    <p>
+      Zero-phase narrow notch filter using <code>scipy.signal.iirnotch</code>.
+      Removes a single frequency (and a narrow band around it) from the signal.
+      Applied forward-backward to maintain zero phase shift.
+    </p>
+    <p>
+      The <code>quality</code> factor controls bandwidth: Q = f₀/bandwidth.
+      Q=30 at 60 Hz gives a notch width of 2 Hz.
+    </p>
+    <p>Called twice per notch setting (e.g. 60 Hz and 120 Hz) by the server's <code>_rebuild_recording()</code>.</p>
+  </div>
+</div>
+
+<h3>harmonic_regression_notch</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">harmonic_regression_notch(data, fs, freq_hz=60.0, n_harmonics=3, window_s=2.0) → np.ndarray</span></div>
+  <div class="api-body">
+    <p>
+      An advanced powerline removal method that handles non-stationary line frequency.
+      Where a simple IIR notch assumes the powerline is exactly at the specified frequency,
+      this method <em>estimates</em> the actual fundamental frequency (f₀) from the data itself,
+      then tracks its harmonics across time.
+    </p>
+
+    <h4>Algorithm</h4>
+    <ol>
+      <li><strong>Estimate f₀:</strong> Compute FFT of the full recording. Find the spectral peak near <code>freq_hz</code> using <em>parabolic interpolation</em> on the FFT magnitude for sub-bin precision. This gives the actual powerline frequency (e.g. 59.97 Hz instead of 60.0 Hz).</li>
+      <li><strong>Windowed regression:</strong> Slide overlapping 2-second Hann-weighted windows over the signal. In each window, fit a least-squares sinusoidal model: sum of sin/cos pairs at f₀, 2f₀, 3f₀ (the harmonics). This fit gives the powerline component at that time.</li>
+      <li><strong>Overlap-add synthesis:</strong> Subtract the fitted harmonic components from the signal using overlap-add, so the subtraction is smooth across window boundaries.</li>
+    </ol>
+
+    <p><strong>Advantage over simple notch:</strong> Works even when powerline frequency drifts (e.g. in low-quality hospital power), and avoids the ringing artifact of narrow IIR notch filters near seizure onset.</p>
+  </div>
+</div>
+
+<h2>Why These Are Separate from Core</h2>
+
+<p>
+  The signal processing primitives in this package have no knowledge of the <code>Metric</code> ABC
+  or <code>Recording</code> containers. They operate on plain numpy arrays.
+  This separation means:
+</p>
+<ul>
+  <li>The server can use <code>notch()</code> directly without pulling in any metric logic</li>
+  <li>You can use <code>segment()</code> on any array — audio, simulation output, etc. — not just EEG</li>
+  <li>Each function is independently testable with simple numpy inputs</li>
+</ul>
+
+</article>
+</main>
+</body>
+</html>

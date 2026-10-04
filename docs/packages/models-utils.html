@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>concord-models-utils — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Packages<span class="sep">›</span> Models Utils</div>
+<h1>concord-models-utils</h1>
+<p class="subtitle">Shared numerical primitives for all model packages</p>
+
+<div class="callout callout-key">
+  <strong>Role in the system</strong>
+  concord-models-utils provides the mathematical building blocks that neural mass models need:
+  sigmoid functions, ODE/SDE integrators, and noise generators.
+  It is the simulation-side analog of concord-metrics-utils. It has no knowledge of the
+  Model ABC or any specific model — just pure numerical code.
+</div>
+
+<h2>Package Structure</h2>
+<pre><code>concord-models-utils/
+  src/concord_models_utils/
+    __init__.py       exports sigmoid, rk4_step, euler_maruyama_step, gaussian_input
+    sigmoid.py        voltage-to-firing-rate transfer function
+    integrators.py    RK4 and Euler-Maruyama single-step integrators
+    noise.py          noise generators for stochastic input</code></pre>
+
+<h2>sigmoid.py</h2>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">sigmoid(v, e0=2.5, v0=6.0, r=0.56) → ndarray | float</span></div>
+  <div class="api-body">
+    <p>
+      Voltage-to-firing-rate sigmoid transfer function.
+      Converts mean membrane potential to mean firing rate.
+    </p>
+    <pre><code>S(v) = 2 · e0 / (1 + exp(r · (v0 - v)))</code></pre>
+    <table>
+      <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>v</td><td>ndarray | float</td><td>Mean membrane potential. Accepts scalars or arrays.</td></tr>
+        <tr><td>e0</td><td>float</td><td>Half of the maximum firing rate (Hz). Default 2.5.</td></tr>
+        <tr><td>v0</td><td>float</td><td>Potential at half maximum firing rate (mV). Default 6.0.</td></tr>
+        <tr><td>r</td><td>float</td><td>Slope of the sigmoid at v0 (1/mV). Default 0.56.</td></tr>
+      </tbody>
+    </table>
+    <p>
+      The exponent is clipped to [-500, 500] to prevent numerical overflow.
+      Default parameter values are from the Jansen-Rit (1995) model.
+    </p>
+  </div>
+</div>
+
+<h2>integrators.py</h2>
+
+<p>
+  Both integrators are <strong>single-step functions</strong> — they advance the state by one time step.
+  The model's <code>simulate()</code> method owns the time loop and calls these repeatedly.
+  Extra arguments are passed through to the derivative function via <code>*args</code>,
+  following the same convention as <code>scipy.integrate.odeint</code>.
+</p>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">rk4_step(f, y, t, dt, *args) → ndarray</span></div>
+  <div class="api-body">
+    <p>
+      Single step of the classic 4th-order Runge-Kutta method for deterministic ODEs.
+    </p>
+    <table>
+      <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>f</td><td>callable</td><td>Derivative function <code>f(y, t, *args) → dy/dt</code></td></tr>
+        <tr><td>y</td><td>ndarray</td><td>Current state vector</td></tr>
+        <tr><td>t</td><td>float</td><td>Current time</td></tr>
+        <tr><td>dt</td><td>float</td><td>Time step</td></tr>
+        <tr><td>*args</td><td>any</td><td>Extra arguments passed through to f</td></tr>
+      </tbody>
+    </table>
+    <p>
+      RK4 evaluates the derivative at four points within the step and takes a weighted average.
+      Accuracy is O(dt<sup>5</sup>) per step — much better than Euler's method (O(dt<sup>2</sup>)).
+    </p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">euler_maruyama_step(f, g, y, t, dt, rng, *args) → ndarray</span></div>
+  <div class="api-body">
+    <p>
+      Single step of the Euler-Maruyama method for stochastic differential equations (SDEs).
+    </p>
+    <pre><code>y_{n+1} = y_n + f(y, t, *args) · dt + g(y, t, *args) · sqrt(dt) · dW</code></pre>
+    <table>
+      <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>f</td><td>callable</td><td>Drift function <code>f(y, t, *args) → ndarray</code></td></tr>
+        <tr><td>g</td><td>callable</td><td>Diffusion function <code>g(y, t, *args) → ndarray</code></td></tr>
+        <tr><td>y</td><td>ndarray</td><td>Current state vector</td></tr>
+        <tr><td>t</td><td>float</td><td>Current time</td></tr>
+        <tr><td>dt</td><td>float</td><td>Time step</td></tr>
+        <tr><td>rng</td><td>numpy.random.Generator</td><td>Random number generator for Wiener increments</td></tr>
+        <tr><td>*args</td><td>any</td><td>Extra arguments passed through to f and g</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Used for models where noise enters directly into the state equations
+      (state-dependent noise). For Jansen-Rit — where noise enters through the external
+      input parameter, not the state — <code>rk4_step</code> is used instead.
+    </p>
+  </div>
+</div>
+
+<h2>noise.py</h2>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">gaussian_input(n_samples, mean, std, rng) → ndarray</span></div>
+  <div class="api-body">
+    <p>
+      Generate a Gaussian white noise input signal. Used to model stochastic
+      external input arriving from other brain regions.
+    </p>
+    <table>
+      <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>n_samples</td><td>int</td><td>Number of samples to generate</td></tr>
+        <tr><td>mean</td><td>float</td><td>Mean of the distribution (e.g. 220 Hz for Jansen-Rit)</td></tr>
+        <tr><td>std</td><td>float</td><td>Standard deviation (e.g. 22 Hz for Jansen-Rit)</td></tr>
+        <tr><td>rng</td><td>numpy.random.Generator</td><td>Random number generator for reproducibility</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="callout callout-note">
+  <strong>Design principle</strong>
+  All functions are stateless, pickle-safe, and take explicit <code>rng</code> parameters
+  instead of using global random state. This ensures reproducible simulations and
+  safe parallel execution for future model fitting.
+</div>
+
+</article>
+</main>
+
+</body>
+</html>

@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Montage Concord — Demo</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js" charset="utf-8"></script>
+</head>
+<body>
+
+<!-- ============================================================ Browser view -->
+<div id="browser-view">
+  <div id="browser-topbar">
+    <span class="browser-title">Montage Concord</span>
+    <label for="data-root-input">Data root:</label>
+    <input id="data-root-input" type="text"
+           placeholder="/path/to/datasets/"
+           spellcheck="false">
+    <button id="set-root-btn">Set Root</button>
+    <button class="font-btn" data-dir="-1" title="Smaller text">A&minus;</button><button class="font-btn" data-dir="1" title="Larger text">A+</button>
+    <a class="docs-link" href="/docs/index.html" target="_blank" rel="noopener" title="Documentation (opens in a new tab)">Docs</a>
+  </div>
+  <div id="browser-columns">
+    <div class="browser-column" id="col-datasets"><div class="col-header"><span>Datasets</span><span class="col-count"></span></div><div class="col-body"></div></div>
+    <div class="browser-column" id="col-subjects"><div class="col-header"><span>Subjects</span><span class="col-count"></span></div><div class="col-body"></div></div>
+    <div class="browser-column" id="col-detail"><div class="col-header"><span>Subject detail</span></div><div class="col-body"></div></div>
+    <div class="browser-column" id="col-sessions"><div class="col-header"><span>Sessions</span><span class="col-count"></span></div><div class="col-body"></div></div>
+    <div class="browser-column" id="col-recordings"><div class="col-header"><span>Recordings</span><span class="col-count"></span></div><div class="col-body"></div></div>
+  </div>
+</div>
+
+<!-- ============================================================ Analysis view -->
+<div id="analysis-view" hidden>
+
+<!-- ============================================================ Top bar -->
+<div id="topbar">
+  <div id="recording-breadcrumb"></div>
+  <button id="browse-btn">Browse</button>
+  <label for="notch-select" style="margin-left:8px">Filter:</label>
+  <select id="notch-select" disabled>
+    <option value="none">No Filter</option>
+    <option value="notch50">50 Hz Notch</option>
+    <option value="notch60">60 Hz Notch</option>
+
+  </select>
+  <span id="status-msg"></span>
+  <div style="flex:1"></div>
+  <button class="font-btn" data-dir="-1" title="Smaller text">A&minus;</button><button class="font-btn" data-dir="1" title="Larger text">A+</button>
+  <a class="docs-link" href="/docs/index.html" target="_blank" rel="noopener" title="Documentation (opens in a new tab)">Docs</a>
+  <button id="settings-btn" title="Layout and server settings">Settings</button>
+</div>
+
+<!-- ============================================================ Workspace: sidebar + main -->
+<div id="workspace">
+
+  <!-- Sidebar -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <div class="montage-bar">
+        <button class="montage-btn active" data-montage="monopolar">Mono</button>
+        <button class="montage-btn" data-montage="bipolar">Bi</button>
+        <button class="montage-btn" data-montage="car">CAR</button>
+      </div>
+      <div class="filter-bar">
+        <button class="filter-btn active" data-filter="all">All</button>
+        <button class="filter-btn" data-filter="soz">SOZ</button>
+        <button class="filter-btn" data-filter="good">Good</button>
+      </div>
+    </div>
+    <div id="channel-list">
+      <div class="ch-placeholder">Load a file to see channels.</div>
+    </div>
+    <select id="spect-channel-select" hidden>
+      <option disabled selected>—</option>
+    </select>
+  </div>
+
+  <button id="sidebar-toggle" title="Toggle sidebar">◀</button>
+
+  <!-- Main panel grid -->
+  <div id="main"></div>
+
+</div>
+
+</div><!-- /analysis-view -->
+
+<!-- ============================================================ Layout modal -->
+<div id="layout-modal" class="modal-overlay" hidden>
+  <div class="modal layout-modal-inner">
+    <div class="modal-header">
+      <span>Settings</span>
+      <button id="layout-close" class="fb-close-btn">×</button>
+    </div>
+    <div class="settings-tabs" role="tablist">
+      <button class="settings-tab active" role="tab" data-tab="layout">Layout</button>
+      <button class="settings-tab" role="tab" data-tab="server">Server</button>
+    </div>
+    <div class="settings-pane" id="settings-pane-layout">
+    <div class="layout-modal-body">
+      <div class="layout-presets">
+        <div class="layout-section-title">Presets</div>
+        <button class="preset-btn" data-preset="clinical">Clinical</button>
+        <button class="preset-btn" data-preset="seizure_onset">Seizure Onset</button>
+        <button class="preset-btn" data-preset="spectral">Spectral</button>
+      </div>
+      <div class="layout-custom">
+        <div class="layout-section-title">Custom Grid</div>
+        <div class="grid-size-row">
+          <label>Rows:
+            <select id="grid-rows">
+              <option>1</option><option selected>2</option><option>3</option>
+            </select>
+          </label>
+          <label>Cols:
+            <select id="grid-cols">
+              <option selected>1</option><option>2</option><option>3</option>
+            </select>
+          </label>
+          <button id="grid-size-apply">Resize</button>
+        </div>
+        <div id="grid-editor"></div>
+        <button id="layout-apply-btn">Apply Layout</button>
+      </div>
+    </div>
+    </div>
+    <div class="settings-pane" id="settings-pane-server" hidden>
+      <div class="server-body">
+        <div class="layout-section-title">Status</div>
+        <table class="metadata-table" id="server-info"></table>
+
+        <div class="layout-section-title">Startup settings</div>
+        <div class="server-form">
+          <label>Host <input id="srv-host" type="text" spellcheck="false"></label>
+          <label>Port <input id="srv-port" type="number" min="1024" max="65535"></label>
+          <label class="srv-wide">Default data root <input id="srv-data-root" type="text" spellcheck="false" placeholder="(project default)"></label>
+          <label class="srv-check"><input id="srv-reload" type="checkbox"> Auto-reload on code changes (development)</label>
+        </div>
+        <div class="srv-hint" id="srv-host-warning" hidden>Host 0.0.0.0 makes the server reachable from your network. It has no authentication.</div>
+        <div class="srv-hint">Saved to <code id="srv-config-path"></code>. Changes take effect on restart.</div>
+        <div class="srv-msg" id="srv-msg"></div>
+        <div class="server-actions">
+          <button id="srv-save-btn">Save</button>
+          <button id="srv-restart-btn">Save &amp; Restart</button>
+          <div style="flex:1"></div>
+          <button id="srv-stop-btn" class="danger-btn">Stop server</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ Folder picker modal -->
+<div id="folder-picker-modal" class="modal-overlay" hidden>
+  <div class="modal folder-picker-inner">
+    <div class="modal-header">
+      <span>Choose Data Root</span>
+      <button id="folder-picker-close" class="fb-close-btn">&times;</button>
+    </div>
+    <div class="folder-picker-pathbar">
+      <button id="fp-up-btn" title="Go up">&uarr;</button>
+      <input id="fp-path-input" type="text" spellcheck="false" placeholder="/path/to/datasets/">
+      <button id="fp-go-btn">Go</button>
+    </div>
+    <div id="fp-dir-list" class="fb-list"></div>
+    <div class="folder-picker-footer">
+      <button id="fp-select-btn">Select This Folder</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ Download modal -->
+<div id="download-modal" class="modal-overlay" hidden>
+  <div class="modal download-modal-inner">
+    <div class="modal-header">
+      <span>Download Subject Data</span>
+      <button id="download-modal-close" class="fb-close-btn">&times;</button>
+    </div>
+    <div class="download-modal-body">
+      <p id="download-desc"></p>
+      <div id="download-progress-area" hidden>
+        <div class="download-progress-bar"><div id="download-progress-fill" class="download-progress-fill"></div></div>
+        <pre id="download-log"></pre>
+      </div>
+    </div>
+    <div class="download-modal-footer">
+      <button id="download-cancel-btn">Cancel</button>
+      <button id="download-start-btn">Download from OpenNeuro</button>
+    </div>
+  </div>
+</div>
+
+<script src="/static/synth.js"></script>
+<script src="/static/dsp.js"></script>
+<script src="/static/demo_signals.js"></script>
+<script src="/static/demo_dataset.js"></script>
+<script src="/static/demo_api.js"></script>
+<script src="/static/demo_ui.js"></script>
+<script type="module" src="/static/browser.js"></script>
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

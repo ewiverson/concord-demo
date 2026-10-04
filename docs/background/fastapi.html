@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FastAPI Framework — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Background<span class="sep">›</span> FastAPI</div>
+<h1>FastAPI Framework</h1>
+<p class="subtitle">Background reading: how Python FastAPI turns functions into HTTP endpoints</p>
+
+<div class="callout callout-note">
+  <strong>Prerequisite</strong>
+  This page assumes you've read <a href="rest-api.html">REST API &amp; HTTP</a>.
+  It explains the Python side of the server.
+</div>
+
+<h2>What FastAPI Does</h2>
+
+<p>
+  FastAPI is a Python library that makes it easy to write web servers.
+  You write regular Python functions with type annotations, and FastAPI handles:
+</p>
+<ul>
+  <li>Listening for incoming HTTP requests</li>
+  <li>Parsing request parameters and body</li>
+  <li>Calling your function with the parsed values</li>
+  <li>Converting your function's return value to a JSON response</li>
+  <li>Generating error responses automatically if types don't match</li>
+</ul>
+
+<h2>A Minimal FastAPI Server</h2>
+
+<pre><code><span class="kw">from</span> fastapi <span class="kw">import</span> FastAPI
+
+app = FastAPI()
+
+@app.get(<span class="st">"/hello"</span>)
+<span class="kw">def</span> <span class="nm">hello</span>():
+    <span class="kw">return</span> {<span class="st">"message"</span>: <span class="st">"Hello, world!"</span>}
+</code></pre>
+
+<p>
+  When you run this and visit <code>http://localhost:8000/hello</code> in a browser,
+  you'll see <code>{"message": "Hello, world!"}</code>.
+  FastAPI automatically converted the Python dict to JSON.
+</p>
+
+<h2>Route Decorators</h2>
+
+<p>
+  The <code>@app.get("/hello")</code> syntax is a Python <strong>decorator</strong> —
+  it wraps the function and registers it with FastAPI as a route handler.
+  The HTTP method and path are specified in the decorator.
+</p>
+
+<pre><code>@app.get(<span class="st">"/items"</span>)       <span class="cm"># responds to GET /items</span>
+@app.post(<span class="st">"/items"</span>)      <span class="cm"># responds to POST /items</span>
+@app.put(<span class="st">"/items/{id}"</span>)  <span class="cm"># responds to PUT /items/42 (path parameter)</span>
+@app.delete(<span class="st">"/items/42"</span>) <span class="cm"># responds to DELETE /items/42</span>
+</code></pre>
+
+<h2>Query Parameters</h2>
+
+<p>
+  For GET requests, parameters come from the URL query string (<code>?key=value</code>).
+  FastAPI reads function parameter names and types to parse them automatically:
+</p>
+
+<pre><code>@app.get(<span class="st">"/api/timeseries"</span>)
+<span class="kw">def</span> <span class="nm">api_timeseries</span>(
+    t_start: float | None = None,     <span class="cm"># ?t_start=0</span>
+    t_end:   float | None = None,     <span class="cm"># ?t_end=10</span>
+    channels: str = <span class="st">""</span>,             <span class="cm"># ?channels=SEEG1,SEEG2</span>
+):
+    <span class="cm"># t_start is already a float (or None if not provided)</span>
+    ...
+</code></pre>
+
+<p>
+  FastAPI parses <code>"0"</code> from the URL string into <code>0.0</code> as a float.
+  If a required parameter is missing or the wrong type, FastAPI returns a 422 error automatically.
+</p>
+
+<h2>Request Body (POST)</h2>
+
+<p>
+  For POST requests, the body is typically JSON. FastAPI uses <strong>Pydantic models</strong>
+  to parse and validate the body automatically:
+</p>
+
+<pre><code><span class="kw">from</span> pydantic <span class="kw">import</span> BaseModel
+
+<span class="kw">class</span> <span class="tp">LoadRequest</span>(BaseModel):
+    path: str           <span class="cm"># required field</span>
+    verbose: bool = False  <span class="cm"># optional, defaults to False</span>
+
+@app.post(<span class="st">"/api/load"</span>)
+<span class="kw">def</span> <span class="nm">api_load</span>(req: LoadRequest):
+    <span class="cm"># req.path and req.verbose are already the right types</span>
+    <span class="cm"># If the JSON body is missing "path", FastAPI returns 422 automatically</span>
+    ...
+</code></pre>
+
+<p>
+  The browser sends: <code>{"path": "/data/file.edf"}</code>
+  FastAPI parses it into a <code>LoadRequest</code> object and passes it to your function.
+</p>
+
+<h2>Routers: Splitting Routes Across Files</h2>
+
+<p>
+  As a server grows, it becomes messy to put all routes in one file.
+  FastAPI's <code>APIRouter</code> lets you define routes in separate modules:
+</p>
+
+<pre><code><span class="cm"># routes/recording.py</span>
+<span class="kw">from</span> fastapi <span class="kw">import</span> APIRouter
+router = APIRouter()
+
+@router.post(<span class="st">"/api/load"</span>)
+<span class="kw">def</span> <span class="nm">api_load</span>(req: LoadRequest): ...
+
+@router.post(<span class="st">"/api/montage"</span>)
+<span class="kw">def</span> <span class="nm">api_montage</span>(req: MontageRequest): ...
+</code></pre>
+
+<pre><code><span class="cm"># server.py</span>
+<span class="kw">from</span> fastapi <span class="kw">import</span> FastAPI
+<span class="kw">from</span> routes <span class="kw">import</span> recording, signal, metrics, notch
+
+app = FastAPI()
+app.include_router(recording.router)  <span class="cm"># registers all routes from that file</span>
+app.include_router(signal.router)
+app.include_router(metrics.router)
+app.include_router(notch.router)
+</code></pre>
+
+<p>
+  concord-server uses exactly this pattern: four router files, assembled in <code>server.py</code>.
+</p>
+
+<h2>Returning Errors</h2>
+
+<p>
+  FastAPI provides <code>HTTPException</code> for returning HTTP error responses:
+</p>
+
+<pre><code><span class="kw">from</span> fastapi <span class="kw">import</span> HTTPException
+
+@app.post(<span class="st">"/api/load"</span>)
+<span class="kw">def</span> <span class="nm">api_load</span>(req: LoadRequest):
+    <span class="kw">if not</span> Path(req.path).exists():
+        <span class="kw">raise</span> HTTPException(
+            status_code=<span class="nb">404</span>,                        <span class="cm"># HTTP 404 Not Found</span>
+            detail=<span class="st">f"File not found: {req.path}"</span>  <span class="cm"># message in response body</span>
+        )
+    ...
+</code></pre>
+
+<p>
+  The browser receives <code>{"detail": "File not found: /path/file.edf"}</code> with status 404.
+  The frontend's <code>apiFetch</code> function checks for non-OK status and shows this message to the user.
+</p>
+
+<h2>Serving Static Files</h2>
+
+<p>
+  FastAPI can also serve static files (HTML, CSS, JS) from a directory:
+</p>
+
+<pre><code><span class="kw">from</span> fastapi.staticfiles <span class="kw">import</span> StaticFiles
+
+app.mount(<span class="st">"/"</span>, StaticFiles(directory=<span class="st">"static/"</span>, html=<span class="nb">True</span>), name=<span class="st">"static"</span>)
+</code></pre>
+
+<p>
+  With <code>html=True</code>, visiting <code>/</code> serves <code>index.html</code> automatically.
+  This is why you can open <code>http://localhost:8000</code> and see the dashboard.
+</p>
+
+<p>
+  <strong>Important:</strong> the static file mount must be added <em>last</em> because it acts as a
+  catch-all — any path not matched by an API route is served as a static file.
+  If added first, it would intercept the <code>/api/*</code> routes before they could respond.
+</p>
+
+<h2>Uvicorn: The HTTP Server</h2>
+
+<p>
+  FastAPI defines routes and handles requests, but it needs an actual network server to receive
+  HTTP connections. In Python, this is done by an <strong>ASGI server</strong> — Montage Concord uses <strong>uvicorn</strong>.
+</p>
+
+<pre><code><span class="kw">import</span> uvicorn
+
+<span class="kw">if</span> __name__ == <span class="st">"__main__"</span>:
+    uvicorn.run(<span class="st">"concord_server.server:app"</span>, host=<span class="st">"0.0.0.0"</span>, port=<span class="nb">8000</span>)
+</code></pre>
+
+<p>
+  Uvicorn handles the TCP socket, HTTP parsing, and calls into your FastAPI app for each request.
+  You interact with it by running <code>python -m concord_server.server</code>.
+</p>
+
+<h2>Why FastAPI (and not Flask or Django)?</h2>
+
+<ul>
+  <li><strong>Type annotations:</strong> FastAPI uses Python type hints for automatic validation and documentation</li>
+  <li><strong>Speed:</strong> Async-first design via uvicorn/ASGI; very fast for I/O-heavy workloads</li>
+  <li><strong>Auto-docs:</strong> automatically generates interactive API documentation at <code>/docs</code></li>
+  <li><strong>Pydantic integration:</strong> request body validation with clear error messages</li>
+  <li><strong>Minimal boilerplate:</strong> a route handler is just a Python function</li>
+</ul>
+
+<div class="callout callout-tip">
+  <strong>Try it!</strong>
+  While the server is running, open <code>http://localhost:8000/docs</code> in your browser.
+  You'll see an interactive API explorer (Swagger UI) that lets you try every endpoint directly.
+  This is generated automatically by FastAPI from the route definitions.
+</div>
+
+</article>
+</main>
+</body>
+</html>

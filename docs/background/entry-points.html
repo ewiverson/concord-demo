@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Python Entry Points — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Background<span class="sep">›</span> Python Entry Points</div>
+<h1>Python Entry Points</h1>
+<p class="subtitle">Background reading: how packages register themselves for discovery without hard imports</p>
+
+<h2>The Problem</h2>
+
+<p>
+  Montage Concord's <code>fit</code> package (when built) will need to find all installed metric and model
+  implementations in order to use them for optimization. The naive solution would be a big import list:
+</p>
+
+<pre><code><span class="cm"># Naive approach — hardcoded list of every metric</span>
+<span class="kw">from</span> concord_metrics_univariate <span class="kw">import</span> LineLength, HjorthParameters
+<span class="kw">from</span> concord_metrics_spectral <span class="kw">import</span> WelchPSD, BandPower
+<span class="kw">from</span> concord_metrics_connectivity <span class="kw">import</span> PLV, Coherence
+<span class="cm"># ... and so on for every metric in every package</span>
+
+ALL_METRICS = [LineLength, HjorthParameters, WelchPSD, BandPower, PLV, ...]
+</code></pre>
+
+<p>
+  This approach breaks the independence of the packages: <code>fit</code> would need to know about
+  (and import from) every metric package. Adding a new metric would require editing <code>fit</code>.
+  That's the opposite of modularity.
+</p>
+
+<h2>Entry Points: Self-Registration</h2>
+
+<p>
+  Python's package system allows packages to <strong>register themselves</strong> under named groups.
+  When you install a package with <code>pip install -e ./concord-metrics-univariate</code>,
+  pip reads its <code>pyproject.toml</code> and stores metadata about what the package provides.
+  Later, any other code can ask: "give me all registered providers of the 'concord.metrics' group."
+</p>
+
+<p>
+  This is the entry_points system — named after the mechanism in Python's standard library
+  (<code>importlib.metadata.entry_points</code>).
+</p>
+
+<h2>How a Package Registers Itself</h2>
+
+<p>In a metric package's <code>pyproject.toml</code>:</p>
+
+<pre><code>[project.entry-points."concord.metrics"]
+line_length = "concord_metrics_univariate:LineLength"
+hjorth      = "concord_metrics_univariate:HjorthParameters"
+</code></pre>
+
+<p>
+  This says: "under the group <code>concord.metrics</code>, I provide two entries.
+  The entry named <code>line_length</code> refers to the class <code>LineLength</code>
+  in the module <code>concord_metrics_univariate</code>."
+</p>
+
+<p>After running <code>pip install -e ./concord-metrics-univariate</code>, these registrations
+are stored in the package's metadata on disk (not imported yet — just recorded).</p>
+
+<h2>How a Consumer Discovers All Registered Classes</h2>
+
+<pre><code><span class="kw">from</span> importlib.metadata <span class="kw">import</span> entry_points
+
+<span class="cm"># Ask for all registered concord.metrics implementations</span>
+eps = entry_points(group=<span class="st">"concord.metrics"</span>)
+
+all_metrics = []
+<span class="kw">for</span> ep <span class="kw">in</span> eps:
+    MetricClass = ep.load()   <span class="cm"># this is where the import actually happens</span>
+    all_metrics.append(MetricClass())
+
+<span class="cm"># all_metrics now contains instances of every installed metric</span>
+print([m.name <span class="kw">for</span> m <span class="kw">in</span> all_metrics])
+<span class="cm"># ["line_length", "hjorth_parameters", "welch_psd", "band_power", ...]</span>
+</code></pre>
+
+<p>
+  <strong>Key insight:</strong> the <code>fit</code> package doesn't import anything explicitly.
+  It asks the Python package system for whatever is registered, and loads them on demand.
+  When someone installs a new third-party metric package that registers itself in the same group,
+  <code>fit</code> automatically discovers it — without any code changes.
+</p>
+
+<h2>The Group Name is a Convention</h2>
+
+<p>
+  <code>"concord.metrics"</code> is just a string — a namespace agreed on by all packages.
+  Models would use <code>"concord.models"</code>. Any string works; the dot-separated format
+  is a convention to avoid collisions with other software.
+</p>
+
+<h2>Analogy: Plugin Systems</h2>
+
+<p>
+  You may have used software that has "plugins" — add-on features that you install separately
+  and the main program automatically detects. Audio editors, IDEs, game engines —
+  they all use a similar plugin registration concept. Python entry_points is the standard
+  mechanism for this in the Python ecosystem.
+</p>
+
+<p>
+  Another familiar example: pytest uses entry_points for its plugins.
+  When you install <code>pytest-cov</code>, it registers itself under <code>pytest11</code>.
+  pytest discovers it automatically and activates the coverage feature — you don't
+  have to tell pytest it's installed.
+</p>
+
+<h2>Console Scripts</h2>
+
+<p>
+  Entry points are also used for command-line tools. This is why you can run
+  <code>pytest</code> or <code>pip</code> from the terminal — these are registered as console_scripts:
+</p>
+
+<pre><code>[project.scripts]
+pytest = "pytest:main"     <span class="cm"># creates a 'pytest' command that calls pytest.main()</span>
+</code></pre>
+
+<p>
+  concord-server could similarly register itself as a console command:
+</p>
+<pre><code>[project.scripts]
+concord-server = "concord_server.server:main"
+<span class="cm"># Then you could just type: concord-server</span>
+</code></pre>
+
+<h2>Summary</h2>
+
+<table class="data-table">
+  <thead><tr><th>Concept</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>entry_points group</td><td>A named category under which packages register things (e.g. "concord.metrics")</td></tr>
+    <tr><td>entry_point</td><td>A named reference to a specific class or function in a specific module</td></tr>
+    <tr><td>Registration</td><td>Done in pyproject.toml under <code>[project.entry-points."group"]</code></td></tr>
+    <tr><td>Discovery</td><td>Done at runtime via <code>importlib.metadata.entry_points(group=...)</code></td></tr>
+    <tr><td>Loading</td><td><code>ep.load()</code> imports the module and returns the referenced class/function</td></tr>
+    <tr><td>Benefit</td><td>Packages can be added without modifying any consumer — true plugin architecture</td></tr>
+  </tbody>
+</table>
+
+</article>
+</main>
+</body>
+</html>

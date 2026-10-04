@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>concord-core — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Packages<span class="sep">›</span> Core</div>
+<h1>concord-core</h1>
+<p class="subtitle">The contract layer — containers and interfaces that every other package depends on</p>
+
+<div class="callout callout-key">
+  <strong>Role in the system</strong>
+  concord-core defines the shared language. Every other package imports from it.
+  It never imports from any sibling package. Its only dependency is numpy.
+</div>
+
+<h2>Package Structure</h2>
+<pre><code>concord-core/
+  src/concord_core/
+    __init__.py       exports all containers, ABCs, and configure_logging
+    containers.py     Recording, MetricResult, ParameterVector, ModelOutput
+    abc.py            Metric ABC, Model ABC, MetricRequirements
+    logging.py        shared logging setup</code></pre>
+
+<h2>Recording</h2>
+
+<p>
+  <code>Recording</code> is the primary data container. It wraps a numpy array of EEG signal
+  along with all the metadata needed to interpret it.
+</p>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method cls">dataclass</span><span class="api-path">Recording</span></div>
+  <div class="api-body">
+    <table>
+      <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>data</td><td>np.ndarray</td><td>Signal array, shape <code>(n_channels, n_samples)</code>, dtype float64. Values are in Volts (MNE SI convention).</td></tr>
+        <tr><td>fs</td><td>float</td><td>Sampling rate in Hz.</td></tr>
+        <tr><td>channel_names</td><td>list[str]</td><td>Channel labels, length <code>n_channels</code>. Matches axis 0 of data.</td></tr>
+        <tr><td>montage</td><td>str</td><td><code>"monopolar"</code> | <code>"bipolar"</code> | <code>"car"</code> — how the signal was referenced.</td></tr>
+        <tr><td>start_time</td><td>float</td><td>Offset in seconds from the beginning of the original recording. Default 0.0.</td></tr>
+        <tr><td>anode_names</td><td>list[str] | None</td><td>For bipolar only: the positive contact of each channel pair.</td></tr>
+        <tr><td>cathode_names</td><td>list[str] | None</td><td>For bipolar only: the negative contact of each channel pair.</td></tr>
+        <tr><td>events</td><td>list[tuple[float, float, str]]</td><td>List of (onset_s, duration_s, label) annotation tuples.</td></tr>
+        <tr><td>channel_metadata</td><td>dict[str, dict] | None</td><td>Per-channel info keyed by channel name. Contains status, status_description, x, y, z from BIDS sidecar files.</td></tr>
+        <tr><td>subject_metadata</td><td>dict | None</td><td>Row from participants.tsv for this subject.</td></tr>
+        <tr><td>metadata</td><td>dict</td><td>Arbitrary key-value pairs (e.g. source file path, ieeg.json content).</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h3>Properties</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method prop">property</span><span class="api-path">Recording.n_channels → int</span></div>
+  <div class="api-body"><p><code>data.shape[0]</code> — number of channels.</p></div>
+</div>
+<div class="api-block">
+  <div class="api-header"><span class="api-method prop">property</span><span class="api-path">Recording.n_samples → int</span></div>
+  <div class="api-body"><p><code>data.shape[1]</code> — number of time samples.</p></div>
+</div>
+<div class="api-block">
+  <div class="api-header"><span class="api-method prop">property</span><span class="api-path">Recording.duration → float</span></div>
+  <div class="api-body"><p><code>n_samples / fs</code> — total duration in seconds.</p></div>
+</div>
+<div class="api-block">
+  <div class="api-header"><span class="api-method prop">property</span><span class="api-path">Recording.times → np.ndarray</span></div>
+  <div class="api-body"><p><code>start_time + np.arange(n_samples) / fs</code> — absolute time stamp for every sample in seconds.</p></div>
+</div>
+
+<h3>channel_metadata structure</h3>
+
+<p>When loaded from a BIDS dataset, <code>channel_metadata</code> is a dict like:</p>
+<pre><code>{
+  "SEEG1": {
+    "status": "good",            <span class="cm"># "good" | "bad" | None</span>
+    "status_description": "soz", <span class="cm"># "soz" | "resected" | None | other</span>
+    "x": 12.3,                   <span class="cm"># MNI coordinate (float) or None</span>
+    "y": -24.1,
+    "z": 8.5,
+    "type": "SEEG",
+    ...                          <span class="cm"># any other columns from channels.tsv</span>
+  },
+  "SEEG2": { ... },
+  ...
+}</code></pre>
+
+<div class="callout callout-note">
+  <strong>Immutability pattern</strong>
+  Recording is a dataclass, not a frozen dataclass — technically mutable — but
+  all functions in the codebase treat it as immutable: they return new Recording
+  objects rather than modifying fields. This is a convention, not enforced by the type system.
+</div>
+
+<h2>MetricResult</h2>
+
+<p>
+  <code>MetricResult</code> is the output of any metric computation.
+  It stores the result array alongside enough metadata to fully interpret it.
+</p>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method cls">dataclass</span><span class="api-path">MetricResult</span></div>
+  <div class="api-body">
+    <table>
+      <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>data</td><td>np.ndarray</td><td>Result values. Shape depends on metric: scalar (), 1D (n_channels,), 2D (n_channels, n_features), or 3D (n_channels, n_windows, n_features).</td></tr>
+        <tr><td>metric_name</td><td>str</td><td>Human-readable name of the metric that produced this result.</td></tr>
+        <tr><td>params</td><td>dict</td><td>All parameters used for computation (window_s, overlap, fmin, etc.) — for reproducibility.</td></tr>
+        <tr><td>channel_labels</td><td>list[str]</td><td>Labels for axis 0 of data. Usually matches Recording.channel_names.</td></tr>
+        <tr><td>units</td><td>str</td><td>Physical units of data values (e.g. "V", "V^2/Hz", "V^2").</td></tr>
+        <tr><td>freq_axis</td><td>np.ndarray | None</td><td>Frequency values in Hz for spectral results (axis 1).</td></tr>
+        <tr><td>time_axis</td><td>np.ndarray | None</td><td>Time values in seconds for windowed results (axis 1).</td></tr>
+        <tr><td>metadata</td><td>dict</td><td>Extra info (e.g. band names for BandPower).</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h3>Shape conventions</h3>
+
+<table class="data-table">
+  <thead><tr><th>Metric type</th><th>data.shape</th><th>Axes</th></tr></thead>
+  <tbody>
+    <tr><td>Global scalar</td><td>()</td><td>—</td></tr>
+    <tr><td>Per-channel scalar</td><td>(n_channels,)</td><td>axis 0 = channels</td></tr>
+    <tr><td>Spectral</td><td>(n_channels, n_freqs)</td><td>axis 0 = channels, axis 1 = freqs (see freq_axis)</td></tr>
+    <tr><td>Windowed</td><td>(n_channels, n_windows)</td><td>axis 0 = channels, axis 1 = time windows (see time_axis)</td></tr>
+    <tr><td>Per-channel multi-feature</td><td>(n_channels, n_features)</td><td>axis 0 = channels, axis 1 = features (e.g. Hjorth params)</td></tr>
+    <tr><td>Windowed multi-feature</td><td>(n_channels, n_windows, n_features)</td><td>full 3D</td></tr>
+  </tbody>
+</table>
+
+<h2>Metric ABC</h2>
+
+<p>
+  Every metric in the system must subclass <code>Metric</code> and implement three things.
+  See <a href="../background/abc-pattern.html">Abstract Base Classes</a> for how this pattern works in Python.
+</p>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method cls">ABC</span><span class="api-path">Metric</span></div>
+  <div class="api-body">
+    <p>Abstract base class. Cannot be instantiated directly — only concrete subclasses can.</p>
+    <table>
+      <thead><tr><th>Member</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>name</td><td>@property str</td><td>Human-readable metric name, e.g. <code>"line_length"</code>.</td></tr>
+        <tr><td>requires</td><td>@property MetricRequirements</td><td>Declares what the metric needs from the Recording before compute() is called.</td></tr>
+        <tr><td>compute(recording)</td><td>@abstractmethod</td><td>Takes a Recording, returns a MetricResult. Must be stateless.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method cls">dataclass</span><span class="api-path">MetricRequirements</span></div>
+  <div class="api-body">
+    <table>
+      <thead><tr><th>Field</th><th>Default</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>min_channels</td><td>1</td><td>Minimum number of channels required.</td></tr>
+        <tr><td>min_duration_s</td><td>0.0</td><td>Minimum recording duration in seconds.</td></tr>
+        <tr><td>min_fs_hz</td><td>0.0</td><td>Minimum sampling rate in Hz.</td></tr>
+        <tr><td>allowed_montages</td><td>None</td><td>If None, any montage is accepted. Otherwise, a list of allowed montage strings.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h3>Implementing a Metric</h3>
+
+<pre><code><span class="kw">from</span> concord_core <span class="kw">import</span> Recording, MetricResult
+<span class="kw">from</span> concord_core.abc <span class="kw">import</span> Metric, MetricRequirements
+<span class="kw">import</span> numpy <span class="kw">as</span> np
+
+<span class="kw">class</span> <span class="tp">MyMetric</span>(Metric):
+    <span class="kw">def</span> <span class="nm">__init__</span>(self, window_s: float = 1.0):
+        self.window_s = window_s      <span class="cm"># only config, no data</span>
+
+    @property
+    <span class="kw">def</span> <span class="nm">name</span>(self) -> str:
+        <span class="kw">return</span> <span class="st">"my_metric"</span>
+
+    @property
+    <span class="kw">def</span> <span class="nm">requires</span>(self) -> MetricRequirements:
+        <span class="kw">return</span> MetricRequirements(
+            min_duration_s=self.window_s,
+            min_fs_hz=<span class="nb">10.0</span>,
+        )
+
+    <span class="kw">def</span> <span class="nm">compute</span>(self, recording: Recording) -> MetricResult:
+        result = np.mean(recording.data, axis=<span class="nb">1</span>)   <span class="cm"># shape (n_channels,)</span>
+        <span class="kw">return</span> MetricResult(
+            data=result,
+            metric_name=self.name,
+            params={<span class="st">"window_s"</span>: self.window_s},
+            channel_labels=list(recording.channel_names),
+            units=<span class="st">"V"</span>,
+        )</code></pre>
+
+<h2>ParameterVector</h2>
+
+<p>
+  <code>ParameterVector</code> carries model parameter values alongside their names and bounds.
+  It is the input to <code>Model.simulate()</code> and the search space for optimization in <code>concord-fit</code>.
+</p>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method cls">dataclass</span><span class="api-path">ParameterVector</span></div>
+  <div class="api-body">
+    <table>
+      <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>names</td><td>list[str]</td><td>Parameter names, e.g. ["A", "B", "a", "b", "C", ...]</td></tr>
+        <tr><td>values</td><td>np.ndarray</td><td>1D array of current parameter values.</td></tr>
+        <tr><td>lower</td><td>np.ndarray</td><td>1D array of lower bounds.</td></tr>
+        <tr><td>upper</td><td>np.ndarray</td><td>1D array of upper bounds.</td></tr>
+        <tr><td>units</td><td>list[str] | None</td><td>Optional units per parameter (e.g. "mV", "1/s").</td></tr>
+        <tr><td>metadata</td><td>dict</td><td>Arbitrary extra info.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h2>ModelOutput</h2>
+
+<p>
+  <code>ModelOutput</code> is the output of a model simulation — the simulation-side analog
+  of <code>MetricResult</code>. It contains the simulated signal plus all internal state variables.
+</p>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method cls">dataclass</span><span class="api-path">ModelOutput</span></div>
+  <div class="api-body">
+    <table>
+      <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>data</td><td>np.ndarray</td><td>Simulated signal, shape <code>(n_nodes, n_samples)</code>. For single-node models, n_nodes = 1.</td></tr>
+        <tr><td>fs</td><td>float</td><td>Output sampling rate in Hz.</td></tr>
+        <tr><td>state_variables</td><td>dict[str, np.ndarray]</td><td>All internal state traces, keyed by name. Each value has shape <code>(n_nodes, n_samples)</code>.</td></tr>
+        <tr><td>parameters</td><td>ParameterVector</td><td>The exact parameters used for this simulation — for reproducibility.</td></tr>
+        <tr><td>node_labels</td><td>list[str]</td><td>Labels for each node (axis 0 of data).</td></tr>
+        <tr><td>time_axis</td><td>np.ndarray | None</td><td>Time stamps in seconds, shape <code>(n_samples,)</code>.</td></tr>
+        <tr><td>metadata</td><td>dict</td><td>Arbitrary extra info.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h2>Model ABC</h2>
+
+<p>
+  Every neural mass model must subclass <code>Model</code> and implement three things.
+  This mirrors the <code>Metric</code> ABC pattern — see
+  <a href="../background/abc-pattern.html">Abstract Base Classes</a> for the general concept
+  and <a href="../background/neural-mass-models.html">Neural Mass Models</a> for the domain background.
+</p>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method cls">ABC</span><span class="api-path">Model</span></div>
+  <div class="api-body">
+    <p>Abstract base class for neural mass models. Cannot be instantiated directly.</p>
+    <table>
+      <thead><tr><th>Member</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>name</td><td>@property str</td><td>Model identifier, e.g. <code>"jansen_rit"</code>.</td></tr>
+        <tr><td>default_parameters()</td><td>@abstractmethod</td><td>Returns a fresh ParameterVector with standard values and bounds.</td></tr>
+        <tr><td>simulate(parameters, duration_s, fs, seed)</td><td>@abstractmethod</td><td>Runs the simulation, returns ModelOutput.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h3>Implementing a Model</h3>
+
+<pre><code><span class="kw">from</span> concord_core <span class="kw">import</span> Model, ModelOutput, ParameterVector
+<span class="kw">import</span> numpy <span class="kw">as</span> np
+
+<span class="kw">class</span> <span class="tp">MyModel</span>(Model):
+    @property
+    <span class="kw">def</span> <span class="nm">name</span>(self) -> str:
+        <span class="kw">return</span> <span class="st">"my_model"</span>
+
+    <span class="kw">def</span> <span class="nm">default_parameters</span>(self) -> ParameterVector:
+        <span class="kw">return</span> ParameterVector(
+            names=[<span class="st">"param_a"</span>, <span class="st">"param_b"</span>],
+            values=np.array([<span class="nb">1.0</span>, <span class="nb">2.0</span>]),
+            lower=np.array([<span class="nb">0.0</span>, <span class="nb">0.0</span>]),
+            upper=np.array([<span class="nb">10.0</span>, <span class="nb">10.0</span>]),
+        )
+
+    <span class="kw">def</span> <span class="nm">simulate</span>(self, parameters, duration_s, fs, seed=<span class="nb">None</span>):
+        <span class="cm"># ... integrate ODEs, produce signal ...</span>
+        <span class="kw">return</span> ModelOutput(
+            data=signal, fs=fs,
+            state_variables={...},
+            parameters=parameters,
+            node_labels=[<span class="st">"node_0"</span>],
+        )</code></pre>
+
+<h2>Logging</h2>
+
+<p>
+  <code>logging.py</code> configures the root logger named <code>"Montage Concord"</code>.
+  All packages use <code>logging.getLogger("Montage Concord.{package_name}")</code> to emit log messages
+  that inherit this configuration.
+</p>
+
+</article>
+</main>
+</body>
+</html>

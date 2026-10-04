@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>concord-io — Montage Concord</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+
+<nav><script src="../nav.js"></script></nav>
+
+<main>
+<article>
+
+<div class="breadcrumb"><a href="../index.html">Home</a><span class="sep">›</span> Packages<span class="sep">›</span> I/O</div>
+<h1>concord-io</h1>
+<p class="subtitle">File reading, re-referencing, and data slicing — the only package that touches files</p>
+
+<div class="callout callout-key">
+  <strong>Role in the system</strong>
+  concord-io is the gateway from disk to memory. It is the <em>only</em> package that
+  knows about file formats. Everything it produces is a <a href="core.html">Recording</a> container.
+  It never returns raw file handles or format-specific objects.
+</div>
+
+<h2>Package Structure</h2>
+<pre><code>concord-io/
+  src/concord_io/
+    __init__.py       exports read_edf, read_bids_ieeg, to_bipolar, to_car,
+                              select_channels, slice_time, scan_datasets,
+                              scan_subjects, scan_sessions, scan_recordings
+    reader.py         EDF reader, BIDS sidecar parsing
+    montage.py        re-referencing operations
+    epoch.py          channel selection and time slicing
+    bids.py           BIDS dataset scanning and discovery</code></pre>
+
+<h2>reader.py</h2>
+
+<h3>read_edf</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">read_edf(path, channel_names=None) → Recording</span></div>
+  <div class="api-body">
+    <p>Reads a raw EDF file. Uses MNE's EDF reader internally. Data is returned in <strong>Volts</strong> (MNE converts from whatever physical unit the EDF stores, typically µV).</p>
+    <table>
+      <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>path</td><td>str | Path</td><td>Path to the EDF file.</td></tr>
+        <tr><td>channel_names</td><td>list[str] | None</td><td>If given, only these channels are loaded (in the specified order). Names must match EDF header labels exactly after stripping whitespace. If None, all signals are loaded.</td></tr>
+      </tbody>
+    </table>
+    <p>Returns a <code>Recording</code> with <code>montage="monopolar"</code>. Events are taken from EDF-embedded annotations.</p>
+  </div>
+</div>
+
+<h3>read_bids_ieeg</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">read_bids_ieeg(edf_path, load_subject_info=True) → Recording</span></div>
+  <div class="api-body">
+    <p>
+      Full BIDS iEEG loader. Calls <code>read_edf()</code> first, then enriches the Recording by
+      parsing all BIDS sidecar files alongside the EDF.
+    </p>
+    <table>
+      <thead><tr><th>Sidecar file</th><th>What is parsed</th><th>Where it goes in Recording</th></tr></thead>
+      <tbody>
+        <tr><td>*_channels.tsv</td><td>Per-channel status, type, units, etc.</td><td>channel_metadata[ch_name]</td></tr>
+        <tr><td>*_events.tsv</td><td>Seizure events, trial types, onset/duration</td><td>events (replaces EDF annotations)</td></tr>
+        <tr><td>*_electrodes.tsv</td><td>MNI x/y/z coordinates per contact</td><td>merged into channel_metadata[ch_name]</td></tr>
+        <tr><td>*_ieeg.json</td><td>Recording-level metadata (task, institution, etc.)</td><td>metadata["ieeg"]</td></tr>
+        <tr><td>participants.tsv</td><td>Subject demographics (age, sex, outcome, etc.)</td><td>subject_metadata</td></tr>
+      </tbody>
+    </table>
+    <p>The function uses the BIDS naming convention to find sidecar files: if the EDF is <code>sub-X_run-01_ieeg.edf</code>, it looks for <code>sub-X_run-01_channels.tsv</code>, etc. in the same directory.</p>
+    <p>For <code>participants.tsv</code>, it walks up the directory tree (up to 5 levels) until it finds the file.</p>
+  </div>
+</div>
+
+<h3>Private helpers</h3>
+
+<table class="data-table">
+  <thead><tr><th>Function</th><th>Purpose</th></tr></thead>
+  <tbody>
+    <tr><td>_detect_encoding(path)</td><td>Reads first 4 bytes to detect BOM; supports UTF-8/16/32. Needed because some BIDS tools write UTF-16 TSV files on Windows.</td></tr>
+    <tr><td>_read_channels_tsv(path)</td><td>Parses TSV into {channel_name: {field: value}}. Converts "n/a" strings to None.</td></tr>
+    <tr><td>_read_events_tsv(path)</td><td>Parses TSV into list of (onset, duration, trial_type) tuples.</td></tr>
+    <tr><td>_read_electrodes_tsv(path)</td><td>Parses TSV into {contact_name: {x, y, z, ...}}.</td></tr>
+    <tr><td>_load_subject_metadata(edf_path)</td><td>Extracts subject ID from path (regex on "sub-*"), walks up to find participants.tsv.</td></tr>
+  </tbody>
+</table>
+
+<h2>montage.py</h2>
+
+<h3>to_bipolar</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">to_bipolar(recording, pairs=None) → Recording</span></div>
+  <div class="api-body">
+    <p>
+      Creates a bipolar montage by computing differences between adjacent contacts.
+      Returns a new Recording with <code>montage="bipolar"</code> and populated
+      <code>anode_names</code> / <code>cathode_names</code>.
+    </p>
+    <p>
+      <strong>Auto-detection:</strong> If <code>pairs</code> is None, the function groups channel names
+      by electrode prefix (the alphabetic part of names like "SEEG1", "SEEG2") and creates consecutive pairs:
+      SEEG1−SEEG2, SEEG2−SEEG3, etc. This is the standard clinical SEEG bipolar reference.
+    </p>
+    <p>
+      <strong>Explicit pairs:</strong> Pass a list of (anode, cathode) tuples to override auto-detection.
+    </p>
+    <p>The result channel name is formatted as <code>"SEEG1-SEEG2"</code>.</p>
+  </div>
+</div>
+
+<h3>to_car</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">to_car(recording) → Recording</span></div>
+  <div class="api-body">
+    <p>
+      Common average reference. Subtracts the mean signal across all channels from each channel:
+      <code>data_car = data - mean(data, axis=0)</code>.
+      Returns a new Recording with <code>montage="car"</code>.
+    </p>
+    <p>Channel names are unchanged. The result has the same shape as the input.</p>
+  </div>
+</div>
+
+<h3>Why Different Montages?</h3>
+
+<table class="data-table">
+  <thead><tr><th>Montage</th><th>Equation</th><th>Effect</th><th>Typical use</th></tr></thead>
+  <tbody>
+    <tr><td>Monopolar</td><td>raw signal</td><td>Includes all common-mode noise; reference electrode determines baseline</td><td>Raw inspection, source localization</td></tr>
+    <tr><td>Bipolar</td><td>V(ch_n) − V(ch_{n+1})</td><td>Cancels far-field activity; highlights local activity between adjacent contacts</td><td>Seizure onset zone localization (clinical standard)</td></tr>
+    <tr><td>CAR</td><td>V(ch) − mean(all V)</td><td>Reduces widespread artifact; assumes activity is spatially sparse</td><td>Resting state, network analysis</td></tr>
+  </tbody>
+</table>
+
+<h2>epoch.py</h2>
+
+<h3>select_channels</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">select_channels(recording, names=None, pattern=None) → Recording</span></div>
+  <div class="api-body">
+    <p>Returns a new Recording containing only the specified channels.</p>
+    <table>
+      <thead><tr><th>Parameter</th><th>Type</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td>names</td><td>list[str] | None</td><td>Explicit list of channel names to include.</td></tr>
+        <tr><td>pattern</td><td>str | None</td><td>Regex pattern matched against channel names. E.g. <code>r"^SEEG\d+$"</code>.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<h3>slice_time</h3>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">slice_time(recording, t_start, t_end) → Recording</span></div>
+  <div class="api-body">
+    <p>Extracts a time window from a Recording. Returns a new Recording covering only the specified range. <code>start_time</code> on the result is set to <code>t_start</code>.</p>
+  </div>
+</div>
+
+<h2>bids.py — Dataset Scanning</h2>
+
+<p>
+  Functions for discovering and navigating BIDS dataset structures without loading any data.
+  Used by the server's BIDS browser to let users navigate datasets, subjects, sessions, and recordings.
+</p>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">scan_datasets(root) → list[dict]</span></div>
+  <div class="api-body">
+    <p>Scans a directory for BIDS datasets — subdirectories containing <code>dataset_description.json</code>.</p>
+    <p><strong>Returns:</strong> list of dicts with keys: <code>dataset_id</code>, <code>name</code>, <code>path</code>, <code>description</code>, <code>bids_version</code>, <code>n_subjects</code>.</p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">scan_subjects(dataset_path) → dict</span></div>
+  <div class="api-body">
+    <p>Scans a BIDS dataset for subjects. Parses <code>participants.tsv</code> and <code>participants.json</code> (field descriptions). Tags each subject with <code>downloaded: bool</code> based on whether actual data files exist.</p>
+    <p><strong>Returns:</strong> dict with keys: <code>fields</code> (from participants.json) and <code>subjects</code> (list of participant rows).</p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">scan_sessions(dataset_path, subject_id) → list[dict]</span></div>
+  <div class="api-body">
+    <p>Lists sessions (<code>ses-*</code> directories) for a subject. Detects available modalities (ieeg, eeg, meg, anat, etc.) per session.</p>
+    <p><strong>Returns:</strong> list of dicts with keys: <code>session_id</code>, <code>path</code>, <code>modalities</code>.</p>
+  </div>
+</div>
+
+<div class="api-block">
+  <div class="api-header"><span class="api-method fn">fn</span><span class="api-path">scan_recordings(dataset_path, subject_id, session_id=None) → list[dict]</span></div>
+  <div class="api-body">
+    <p>Lists recording files within a subject/session directory. Discovers recordings from both actual data files and JSON sidecars (marking undownloaded files as <code>downloaded: false</code>). Parses BIDS entities (task, run, acquisition, modality) from filenames.</p>
+    <p><strong>Returns:</strong> list of dicts with keys: <code>filename</code>, <code>path</code>, <code>task</code>, <code>run</code>, <code>acquisition</code>, <code>modality</code>, <code>has_events</code>, <code>has_channels</code>, <code>downloaded</code>.</p>
+  </div>
+</div>
+
+<h2>Example Usage</h2>
+
+<pre><code><span class="kw">from</span> concord_io <span class="kw">import</span> read_bids_ieeg, to_bipolar, slice_time
+
+<span class="cm"># Load full recording from BIDS dataset</span>
+rec = read_bids_ieeg(<span class="st">"ds004100/sub-HUP117/ses-presurgery/ieeg/sub-HUP117_run-01_ieeg.edf"</span>)
+print(rec.n_channels, rec.duration, rec.fs)   <span class="cm"># e.g. 72  300.0  1024.0</span>
+
+<span class="cm"># Re-reference to bipolar</span>
+rec_bi = to_bipolar(rec)
+print(rec_bi.montage)                          <span class="cm"># "bipolar"</span>
+print(rec_bi.channel_names[:3])               <span class="cm"># ["SEEG1-SEEG2", "SEEG2-SEEG3", ...]</span>
+
+<span class="cm"># Extract 10 seconds around a seizure</span>
+onset = rec.events[0][0]                       <span class="cm"># first event onset time</span>
+window = slice_time(rec_bi, onset - 5, onset + 5)
+print(window.duration)                         <span class="cm"># 10.0</span></code></pre>
+
+<h2>BIDS Dataset: HUP117</h2>
+
+<p>The primary test dataset is:</p>
+<ul>
+  <li><strong>Dataset:</strong> HUP iEEG (OpenNeuro ds004100)</li>
+  <li><strong>Subject:</strong> sub-HUP117 — SEEG, temporal lobe, lesional, Engel 1A outcome</li>
+  <li><strong>Path:</strong> <code>concord-data/datasets/ds004100/sub-HUP117/ses-presurgery/ieeg/</code></li>
+  <li><strong>Contents:</strong> 3 ictal EDF runs, 2 interictal EDF runs, ~72 channels, ~56 with 3D coordinates</li>
+  <li><strong>SOZ contacts:</strong> OFAL1-3, STG1-4 (labeled in channels.tsv as status_description="soz")</li>
+</ul>
+
+</article>
+</main>
+</body>
+</html>
